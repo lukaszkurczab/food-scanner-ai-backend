@@ -20,3 +20,6 @@ sentry-sdk[fastapi]==2.20.0
 # Tests
 pytest==8.3.4
 httpx==0.28.1
+
+# Lint
+ruff==0.9.7

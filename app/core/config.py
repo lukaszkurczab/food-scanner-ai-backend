@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    API_V2_PREFIX: str = "/api/v2"
 
     # Runtime environment
     ENVIRONMENT: Literal["local", "development", "staging", "production"] = "local"

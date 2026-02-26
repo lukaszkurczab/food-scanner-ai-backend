@@ -22,7 +22,10 @@ It handles health/status endpoints now and is prepared for AI, Firebase/Firestor
 ```text
 app/
   main.py                # FastAPI app factory
-  api/                   # API routers
+  api/
+    router.py            # version router registry (/api/v1, /api/v2)
+    v1/                  # stable API version 1
+    v2/                  # next API version (extension point)
   core/                  # app config/settings
   services/              # business logic
   schemas/               # request/response models
@@ -31,6 +34,12 @@ tests/
 requirements.txt
 README.md
 ```
+
+## API Versioning Strategy
+
+- Keep existing contracts in `v1` stable (`/api/v1/...`).
+- Introduce breaking changes only in `v2` (`/api/v2/...`).
+- Add new `v2` endpoints in `app/api/v2/routes/*` and register them in `app/api/v2/router.py` without modifying `v1` handlers.
 
 ## Local Run
 
@@ -63,6 +72,7 @@ Current codebase requires only app config variables. Integration variables below
 | `VERSION` | No | `0.1.0` | API version exposed by app |
 | `DEBUG` | No | `false` | FastAPI debug mode |
 | `API_V1_PREFIX` | No | `/api/v1` | Global API route prefix |
+| `API_V2_PREFIX` | No | `/api/v2` | Next API version route prefix |
 | `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
 | `FIREBASE_PROJECT_ID` | Yes (Firebase/Firestore features) | - | Firebase project selection |
 | `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email |
@@ -78,6 +88,7 @@ APP_NAME=CaloriAI Food Scanner API
 VERSION=0.1.0
 DEBUG=true
 API_V1_PREFIX=/api/v1
+API_V2_PREFIX=/api/v2
 OPENAI_API_KEY=your_openai_key
 FIREBASE_PROJECT_ID=your_project_id
 FIREBASE_CLIENT_EMAIL=your_service_account_email
