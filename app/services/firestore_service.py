@@ -11,13 +11,10 @@ from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
+from app.core.exceptions import FirestoreServiceError
 from app.db import firebase as firebase_db
 
 logger = logging.getLogger(__name__)
-
-
-class FirestoreServiceError(Exception):
-    """Raised when Firestore operations fail inside the service layer."""
 
 
 async def get_document(collection: str, document_id: str) -> dict[str, Any] | None:

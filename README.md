@@ -75,6 +75,8 @@ Set the foundation-stage environment variables before starting the API:
 - `FIREBASE_PROJECT_ID` - Google Cloud project ID used by Firebase Admin and Firestore.
 - `GOOGLE_APPLICATION_CREDENTIALS` - absolute path to the Firebase service account JSON key used during backend startup.
 - `CORS_ORIGINS` - comma-separated list of allowed client origins. For local development you can use `CORS_ORIGINS=*`, but production should always list concrete domains.
+- `OPENAI_API_KEY` - required for the OpenAI service used by `/api/v1/ai/ask`.
+- `AI_DAILY_LIMIT_FREE` - daily AI request limit for free users, used by `/api/v1/ai/usage` and `/api/v1/ai/ask`.
 
 Run the application locally:
 
@@ -86,6 +88,8 @@ On startup, the backend configures CORS and attempts to initialize Firebase/Fire
 
 - `GET /api/v1/health`
 - `GET /api/v1/version`
+- `GET /api/v1/ai/usage?userId=<id>`
+- `POST /api/v1/ai/ask`
 
 ## Required Environment Variables
 
@@ -99,6 +103,7 @@ Current codebase requires only app config variables. Integration variables below
 | `API_V1_PREFIX` | No | `/api/v1` | Global API route prefix |
 | `API_V2_PREFIX` | No | `/api/v2` | Next API version route prefix |
 | `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
+| `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
 | `FIREBASE_PROJECT_ID` | Yes (Firebase/Firestore features) | - | Firebase project selection |
 | `FIREBASE_CLIENT_EMAIL` | Yes (Firebase/Firestore features) | - | Service account client email |
 | `FIREBASE_PRIVATE_KEY` | Yes (Firebase/Firestore features) | - | Service account private key |
@@ -115,6 +120,7 @@ DEBUG=true
 API_V1_PREFIX=/api/v1
 API_V2_PREFIX=/api/v2
 OPENAI_API_KEY=your_openai_key
+AI_DAILY_LIMIT_FREE=20
 FIREBASE_PROJECT_ID=your_project_id
 FIREBASE_CLIENT_EMAIL=your_service_account_email
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
@@ -148,6 +154,77 @@ Notes:
 - `google-cloud-firestore` is used for direct Firestore operations (documents, queries, transactions).
 - `firebase-admin` is used for backend Firebase operations (for example auth token verification and admin-level access).
 - Recommended in production: use a dedicated service account with minimal permissions.
+
+## AI Endpoints
+
+Set these values in `.env` before using AI endpoints:
+
+```env
+OPENAI_API_KEY=your_openai_key
+AI_DAILY_LIMIT_FREE=20
+```
+
+`GET /api/v1/ai/usage?userId=<id>` returns current daily AI usage.
+
+Example request:
+
+```http
+GET /api/v1/ai/usage?userId=abc
+```
+
+Example response:
+
+```json
+{
+  "userId": "abc",
+  "dateKey": "2026-03-01",
+  "usageCount": 3,
+  "dailyLimit": 20,
+  "remaining": 17
+}
+```
+
+`POST /api/v1/ai/ask` accepts a chat request, checks content policy, sanitizes the prompt, increments usage, and forwards the message to OpenAI.
+
+Example request:
+
+```json
+{
+  "userId": "abc",
+  "message": "Suggest a simple dinner",
+  "context": {
+    "weightKg": 78,
+    "goal": "fat loss"
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "userId": "abc",
+  "reply": "Try grilled chicken, rice, and a side salad.",
+  "usageCount": 4,
+  "remaining": 16,
+  "dateKey": "2026-03-01",
+  "version": "0.1.0"
+}
+```
+
+Error responses:
+
+```json
+{
+  "detail": "AI usage limit exceeded"
+}
+```
+
+```json
+{
+  "detail": "AI service unavailable"
+}
+```
 
 ## Sentry (Short)
 
