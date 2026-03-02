@@ -26,4 +26,6 @@ htmlcov/
 
 # Environment
 .env
-service_account.json
+
+# secrets and local credentials
+service-account.json
