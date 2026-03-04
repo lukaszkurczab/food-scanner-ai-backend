@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 import logging
 from typing import Any
-from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -12,7 +11,12 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
-from app.db.firebase import get_firestore, get_storage_bucket
+from app.db.firebase import (
+    build_storage_download_url,
+    get_firestore,
+    get_storage_bucket,
+    get_storage_bucket_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +35,6 @@ def _utc_timestamp_ms() -> int:
 def _feedback_collection(user_id: str) -> firestore.CollectionReference:
     client: firestore.Client = get_firestore()
     return client.collection(USERS_COLLECTION).document(user_id).collection(FEEDBACK_SUBCOLLECTION)
-
-
-def _build_download_url(bucket_name: str, object_path: str, token: str) -> str:
-    encoded_path = quote(object_path, safe="")
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/"
-        f"{encoded_path}?alt=media&token={token}"
-    )
 
 
 def _normalize_message(message: str) -> str:
@@ -102,7 +98,14 @@ async def _upload_attachment(
     finally:
         upload.file.close()
 
-    return _build_download_url(bucket.name, object_path, token), object_path
+    return (
+        build_storage_download_url(
+            get_storage_bucket_name(bucket),
+            object_path,
+            token,
+        ),
+        object_path,
+    )
 
 
 async def create_feedback(

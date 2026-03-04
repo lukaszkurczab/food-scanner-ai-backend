@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_database_error
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.chat_thread import (
+    ChatMessageItem,
     ChatMessagePersistRequest,
     ChatMessagePersistResponse,
     ChatMessagesPageResponse,
+    ChatThreadItem,
     ChatThreadsPageResponse,
 )
 from app.services import chat_thread_service
@@ -26,13 +29,10 @@ async def get_chat_threads_me(
             before_updated_at=beforeUpdatedAt,
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return ChatThreadsPageResponse(
-        items=items,
+        items=[ChatThreadItem.model_validate(item) for item in items],
         nextBeforeUpdatedAt=next_before_updated_at,
     )
 
@@ -55,13 +55,10 @@ async def get_chat_thread_messages_me(
             before_created_at=beforeCreatedAt,
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return ChatMessagesPageResponse(
-        items=items,
+        items=[ChatMessageItem.model_validate(item) for item in items],
         nextBeforeCreatedAt=next_before_created_at,
     )
 
@@ -86,10 +83,7 @@ async def persist_chat_thread_message_me(
             title=request.title,
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return ChatMessagePersistResponse(
         threadId=threadId,

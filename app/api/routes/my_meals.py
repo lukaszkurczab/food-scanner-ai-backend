@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_bad_request, raise_database_error
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.meal import (
     MealChangesPageResponse,
     MealDeleteRequest,
     MealDeleteResponse,
+    MealItem,
     MealPhotoUploadResponse,
     MealUpsertRequest,
     MealUpsertResponse,
@@ -28,17 +30,14 @@ async def get_my_meal_changes_me(
             after_cursor=afterCursor,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return MealChangesPageResponse(items=items, nextCursor=next_cursor)
+    return MealChangesPageResponse(
+        items=[MealItem.model_validate(item) for item in items],
+        nextCursor=next_cursor,
+    )
 
 
 @router.post("/users/me/my-meals", response_model=MealUpsertResponse)
@@ -52,17 +51,11 @@ async def upsert_my_meal_me(
             request.model_dump(),
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return MealUpsertResponse(meal=meal, updated=True)
+    return MealUpsertResponse(meal=MealItem.model_validate(meal), updated=True)
 
 
 @router.post("/users/me/my-meals/{mealId}/delete", response_model=MealDeleteResponse)
@@ -78,15 +71,9 @@ async def delete_my_meal_me(
             updated_at=request.updatedAt,
         )
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return MealDeleteResponse(
         mealId=meal["cloudId"],
@@ -111,9 +98,6 @@ async def upload_my_meal_photo_me(
             file,
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return MealPhotoUploadResponse(**payload)

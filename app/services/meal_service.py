@@ -2,8 +2,7 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Any
-from urllib.parse import quote
+from typing import Any, NotRequired, TypedDict
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -12,7 +11,12 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
-from app.db.firebase import get_firestore, get_storage_bucket
+from app.db.firebase import (
+    build_storage_download_url,
+    get_firestore,
+    get_storage_bucket,
+    get_storage_bucket_name,
+)
 from app.services import streak_service
 
 logger = logging.getLogger(__name__)
@@ -25,16 +29,14 @@ MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack", "other"}
 MEAL_SOURCES = {"ai", "manual", "saved"}
 
 
+class MealPhotoPayload(TypedDict):
+    imageId: str
+    photoUrl: str
+    mealId: NotRequired[str | None]
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _build_storage_download_url(bucket_name: str, object_path: str, token: str) -> str:
-    encoded_path = quote(object_path, safe="")
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/"
-        f"{encoded_path}?alt=media&token={token}"
-    )
 
 
 def _coerce_iso8601(value: Any, *, fallback: str | None = None) -> str:
@@ -149,7 +151,7 @@ def _meal_ref(user_id: str, meal_id: str) -> firestore.DocumentReference:
 
 
 def _storage_url_for_path(bucket_name: str, object_path: str, token: str) -> str:
-    return _build_storage_download_url(bucket_name, object_path, token)
+    return build_storage_download_url(bucket_name, object_path, token)
 
 
 def _read_or_create_storage_token(blob: Any) -> str:
@@ -423,7 +425,7 @@ async def mark_deleted(
     return payload
 
 
-async def upload_photo(user_id: str, upload: UploadFile) -> dict[str, str]:
+async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:
     bucket = get_storage_bucket()
     extension = "jpg"
     if upload.filename and "." in upload.filename:
@@ -452,11 +454,20 @@ async def upload_photo(user_id: str, upload: UploadFile) -> dict[str, str]:
 
     return {
         "imageId": image_id,
-        "photoUrl": _storage_url_for_path(bucket.name, object_path, token),
+        "photoUrl": _storage_url_for_path(
+            get_storage_bucket_name(bucket),
+            object_path,
+            token,
+        ),
     }
 
 
-async def resolve_photo(user_id: str, *, meal_id: str | None = None, image_id: str | None = None) -> dict[str, str]:
+async def resolve_photo(
+    user_id: str,
+    *,
+    meal_id: str | None = None,
+    image_id: str | None = None,
+) -> MealPhotoPayload:
     normalized_meal_id = _as_string(meal_id)
     normalized_image_id = _as_string(image_id)
 
@@ -515,7 +526,11 @@ async def resolve_photo(user_id: str, *, meal_id: str | None = None, image_id: s
         return {
             "mealId": normalized_meal_id or None,
             "imageId": resolved_image_id,
-            "photoUrl": _storage_url_for_path(bucket.name, object_path, token),
+            "photoUrl": _storage_url_for_path(
+                get_storage_bucket_name(bucket),
+                object_path,
+                token,
+            ),
         }
 
     raise ValueError("Meal photo not found")

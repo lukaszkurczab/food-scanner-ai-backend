@@ -32,6 +32,7 @@ def test_init_firebase_prefers_inline_service_account_credentials(
 
     mocker.patch.object(firebase.firebase_admin, "_apps", [])
     mocker.patch.object(firebase.settings, "FIREBASE_PROJECT_ID", "demo-project")
+    mocker.patch.object(firebase.settings, "FIREBASE_STORAGE_BUCKET", "")
     mocker.patch.object(firebase.settings, "FIREBASE_CLIENT_EMAIL", "firebase@example.com")
     mocker.patch.object(
         firebase.settings,
@@ -61,7 +62,10 @@ def test_init_firebase_prefers_inline_service_account_credentials(
     )
     initialize_app.assert_called_once_with(
         credential=certificate,
-        options={"projectId": "demo-project"},
+        options={
+            "projectId": "demo-project",
+            "storageBucket": "demo-project.appspot.com",
+        },
     )
     assert result is initialized_app
 
@@ -72,6 +76,7 @@ def test_init_firebase_falls_back_to_service_account_file(mocker: MockerFixture)
 
     mocker.patch.object(firebase.firebase_admin, "_apps", [])
     mocker.patch.object(firebase.settings, "FIREBASE_PROJECT_ID", "demo-project")
+    mocker.patch.object(firebase.settings, "FIREBASE_STORAGE_BUCKET", "")
     mocker.patch.object(firebase.settings, "FIREBASE_CLIENT_EMAIL", "")
     mocker.patch.object(firebase.settings, "FIREBASE_PRIVATE_KEY", "")
     mocker.patch.object(
@@ -93,6 +98,9 @@ def test_init_firebase_falls_back_to_service_account_file(mocker: MockerFixture)
     certificate_factory.assert_called_once_with("/app/service-account.json")
     initialize_app.assert_called_once_with(
         credential=certificate,
-        options={"projectId": "demo-project"},
+        options={
+            "projectId": "demo-project",
+            "storageBucket": "demo-project.appspot.com",
+        },
     )
     assert result is initialized_app

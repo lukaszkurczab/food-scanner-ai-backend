@@ -1,12 +1,19 @@
 import logging
 from time import perf_counter
+from typing import TypedDict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import (
     AuthenticatedUser,
     get_required_authenticated_user,
+)
+from app.api.http_errors import (
+    raise_database_error,
+    raise_forbidden,
+    raise_service_unavailable,
+    raise_too_many_requests,
 )
 from app.core.config import settings
 from app.core.exceptions import (
@@ -16,7 +23,7 @@ from app.core.exceptions import (
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
-from app.schemas.ai_common import BACKEND_OWNED_PERSISTENCE
+from app.schemas.ai_common import AiPersistence, BACKEND_OWNED_PERSISTENCE
 from app.schemas.ai_photo import (
     AiPhotoAnalyzeRequest,
     AiPhotoAnalyzeResponse,
@@ -40,6 +47,14 @@ from app.services import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class AiResponseFields(TypedDict):
+    usageCount: float
+    remaining: float
+    dateKey: str
+    version: str
+    persistence: AiPersistence
 
 
 def _resolve_language(request: AiAskRequest) -> str:
@@ -96,6 +111,44 @@ async def _log_gateway_result(
         )
 
 
+async def _increment_usage_or_raise(
+    user_id: str,
+    *,
+    cost: float = 1.0,
+    include_cost_kwarg: bool = False,
+) -> tuple[float, str, float]:
+    try:
+        if include_cost_kwarg:
+            usage_count, _daily_limit, date_key, remaining = (
+                await ai_usage_service.increment_usage(user_id, cost=cost)
+            )
+        else:
+            usage_count, _daily_limit, date_key, remaining = (
+                await ai_usage_service.increment_usage(user_id)
+            )
+    except AiUsageLimitExceededError as exc:
+        raise_too_many_requests(exc, detail="AI usage limit exceeded")
+    except FirestoreServiceError as exc:
+        raise_database_error(exc)
+
+    return usage_count, date_key, remaining
+
+
+def _build_ai_response_fields(
+    *,
+    usage_count: float,
+    remaining: float,
+    date_key: str,
+) -> AiResponseFields:
+    return {
+        "usageCount": usage_count,
+        "remaining": remaining,
+        "dateKey": date_key,
+        "version": settings.VERSION,
+        "persistence": BACKEND_OWNED_PERSISTENCE,
+    }
+
+
 def _build_ai_ask_response(
     *,
     reply: str,
@@ -105,11 +158,11 @@ def _build_ai_ask_response(
 ) -> AiAskResponse:
     return AiAskResponse(
         reply=reply,
-        usageCount=usage_count,
-        remaining=remaining,
-        dateKey=date_key,
-        version=settings.VERSION,
-        persistence=BACKEND_OWNED_PERSISTENCE,
+        **_build_ai_response_fields(
+            usage_count=usage_count,
+            remaining=remaining,
+            date_key=date_key,
+        ),
     )
 
 
@@ -124,10 +177,7 @@ async def ask_ai(
     try:
         content_guard_service.check_allowed(request.message)
     except ContentBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise_forbidden(exc, detail=str(exc))
 
     language = _resolve_language(request)
     action_type = _resolve_action_type(request)
@@ -166,21 +216,11 @@ async def ask_ai(
         else sanitized_message
     )
 
-    try:
-        usage_count, daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
-            user_id,
-            cost=gateway_result["credit_cost"],
-        )
-    except AiUsageLimitExceededError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="AI usage limit exceeded",
-        ) from exc
-    except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+    usage_count, date_key, remaining = await _increment_usage_or_raise(
+        user_id,
+        cost=gateway_result["credit_cost"],
+        include_cost_kwarg=True,
+    )
 
     if gateway_result["decision"] == "REJECT":
         await _log_gateway_result(
@@ -218,10 +258,7 @@ async def ask_ai(
     try:
         reply = await openai_service.ask_chat(prompt_message)
     except OpenAIServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable",
-        ) from exc
+        raise_service_unavailable(exc, detail="AI service unavailable")
 
     await _log_gateway_result(
         user_id=user_id,
@@ -247,20 +284,7 @@ async def analyze_photo_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiPhotoAnalyzeResponse:
     user_id = current_user.uid
-    try:
-        usage_count, _daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
-            user_id
-        )
-    except AiUsageLimitExceededError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="AI usage limit exceeded",
-        ) from exc
-    except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+    usage_count, date_key, remaining = await _increment_usage_or_raise(user_id)
 
     try:
         ingredients = await openai_service.analyze_photo(
@@ -268,18 +292,15 @@ async def analyze_photo_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable",
-        ) from exc
+        raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiPhotoAnalyzeResponse(
         ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
-        usageCount=usage_count,
-        remaining=remaining,
-        dateKey=date_key,
-        version=settings.VERSION,
-        persistence=BACKEND_OWNED_PERSISTENCE,
+        **_build_ai_response_fields(
+            usage_count=usage_count,
+            remaining=remaining,
+            date_key=date_key,
+        ),
     )
 
 
@@ -289,20 +310,7 @@ async def analyze_text_meal_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiTextMealAnalyzeResponse:
     user_id = current_user.uid
-    try:
-        usage_count, _daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
-            user_id
-        )
-    except AiUsageLimitExceededError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="AI usage limit exceeded",
-        ) from exc
-    except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+    usage_count, date_key, remaining = await _increment_usage_or_raise(user_id)
 
     try:
         ingredients = await text_meal_service.analyze_text_meal(
@@ -310,16 +318,13 @@ async def analyze_text_meal_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable",
-        ) from exc
+        raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiTextMealAnalyzeResponse(
         ingredients=[AiTextMealIngredient(**ingredient) for ingredient in ingredients],
-        usageCount=usage_count,
-        remaining=remaining,
-        dateKey=date_key,
-        version=settings.VERSION,
-        persistence=BACKEND_OWNED_PERSISTENCE,
+        **_build_ai_response_fields(
+            usage_count=usage_count,
+            remaining=remaining,
+            date_key=date_key,
+        ),
     )

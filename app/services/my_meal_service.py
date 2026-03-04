@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 import logging
 from typing import Any
-from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -12,7 +11,12 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
-from app.db.firebase import get_firestore, get_storage_bucket
+from app.db.firebase import (
+    build_storage_download_url,
+    get_firestore,
+    get_storage_bucket,
+    get_storage_bucket_name,
+)
 from app.services.meal_service import (
     DOCUMENT_ID_FIELD,
     _build_cursor,
@@ -165,14 +169,6 @@ async def mark_deleted(
     return payload
 
 
-def _build_download_url(bucket_name: str, object_path: str, token: str) -> str:
-    encoded_path = quote(object_path, safe="")
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/"
-        f"{encoded_path}?alt=media&token={token}"
-    )
-
-
 async def upload_photo(
     user_id: str,
     meal_id: str,
@@ -210,5 +206,9 @@ async def upload_photo(
     return {
         "mealId": meal_id,
         "imageId": image_id,
-        "photoUrl": _build_download_url(bucket.name, object_path, token),
+        "photoUrl": build_storage_download_url(
+            get_storage_bucket_name(bucket),
+            object_path,
+            token,
+        ),
     }

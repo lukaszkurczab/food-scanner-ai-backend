@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_database_error
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.badge import (
+    BadgeItemResponse,
     BadgeListResponse,
     PremiumBadgeReconcileRequest,
     PremiumBadgeReconcileResponse,
@@ -16,12 +18,11 @@ async def _list_badges_for_user(*, user_id: str) -> BadgeListResponse:
     try:
         items = await badge_service.list_badges(user_id)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return BadgeListResponse(items=items)
+    return BadgeListResponse(
+        items=[BadgeItemResponse.model_validate(item) for item in items]
+    )
 
 
 async def _reconcile_premium_badges_for_user(
@@ -38,10 +39,7 @@ async def _reconcile_premium_badges_for_user(
             )
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return PremiumBadgeReconcileResponse(
         awardedBadgeIds=awarded_badge_ids,

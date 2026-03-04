@@ -17,6 +17,20 @@ CHAT_THREADS_SUBCOLLECTION = "chat_threads"
 MESSAGES_SUBCOLLECTION = "messages"
 
 
+def _coerce_int(value: Any, *, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _threads_collection(user_id: str) -> firestore.CollectionReference:
     client: firestore.Client = get_firestore()
     return (
@@ -44,14 +58,10 @@ def _normalize_thread(
     return {
         "id": snapshot.id,
         "title": str(data.get("title") or ""),
-        "createdAt": int(data.get("createdAt") or 0),
-        "updatedAt": int(data.get("updatedAt") or 0),
+        "createdAt": _coerce_int(data.get("createdAt")),
+        "updatedAt": _coerce_int(data.get("updatedAt")),
         "lastMessage": str(data.get("lastMessage") or "") or None,
-        "lastMessageAt": (
-            int(data.get("lastMessageAt"))
-            if data.get("lastMessageAt") is not None
-            else None
-        ),
+        "lastMessageAt": _coerce_optional_int(data.get("lastMessageAt")),
     }
 
 
@@ -63,13 +73,13 @@ def _normalize_message(
     if role not in {"user", "assistant", "system"}:
         role = "assistant"
 
-    created_at = int(data.get("createdAt") or 0)
+    created_at = _coerce_int(data.get("createdAt"))
     return {
         "id": snapshot.id,
         "role": role,
         "content": str(data.get("content") or ""),
         "createdAt": created_at,
-        "lastSyncedAt": int(data.get("lastSyncedAt") or created_at),
+        "lastSyncedAt": _coerce_int(data.get("lastSyncedAt"), fallback=created_at),
         "deleted": bool(data.get("deleted") or False),
     }
 

@@ -9,6 +9,7 @@ lifetime.
 
 from functools import lru_cache
 import logging
+from urllib.parse import quote
 
 import firebase_admin
 from firebase_admin import credentials, firestore as admin_firestore, storage as admin_storage
@@ -16,6 +17,7 @@ from google.cloud import firestore
 from google.cloud.storage import bucket as storage_bucket
 
 from app.core.config import settings
+from app.core.exceptions import FirestoreServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +82,18 @@ def get_firestore() -> firestore.Client:
 def get_storage_bucket() -> storage_bucket.Bucket:
     app = init_firebase()
     return admin_storage.bucket(app=app)
+
+
+def get_storage_bucket_name(bucket: object) -> str:
+    bucket_name = getattr(bucket, "name", None)
+    if isinstance(bucket_name, str) and bucket_name.strip():
+        return bucket_name
+    raise FirestoreServiceError("Firebase storage bucket is not configured.")
+
+
+def build_storage_download_url(bucket_name: str, object_path: str, token: str) -> str:
+    encoded_path = quote(object_path, safe="")
+    return (
+        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/"
+        f"{encoded_path}?alt=media&token={token}"
+    )

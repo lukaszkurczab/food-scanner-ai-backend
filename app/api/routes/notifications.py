@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_bad_request, raise_database_error
 from app.core.exceptions import FirestoreServiceError
 from app.schemas.notification import (
     NotificationDeleteResponse,
     NotificationListResponse,
+    NotificationPrefsPayload,
     NotificationPrefsResponse,
     NotificationPrefsUpdateRequest,
     NotificationPrefsUpdateResponse,
@@ -30,12 +32,11 @@ async def _list_notifications_for_user(*, user_id: str) -> NotificationListRespo
     try:
         items = await notification_service.list_notifications(user_id)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return NotificationListResponse(items=items)
+    return NotificationListResponse(
+        items=[UserNotificationItem.model_validate(item) for item in items]
+    )
 
 
 async def _upsert_notification_for_user(
@@ -49,17 +50,14 @@ async def _upsert_notification_for_user(
             payload.model_dump(),
         )
     except NotificationValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return NotificationUpsertResponse(item=item, updated=True)
+    return NotificationUpsertResponse(
+        item=UserNotificationItem.model_validate(item),
+        updated=True,
+    )
 
 
 async def _delete_notification_for_user(
@@ -70,15 +68,9 @@ async def _delete_notification_for_user(
     try:
         await notification_service.delete_notification(user_id, notification_id)
     except NotificationValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return NotificationDeleteResponse(
         notificationId=notification_id,
@@ -90,12 +82,11 @@ async def _get_notification_prefs_for_user(*, user_id: str) -> NotificationPrefs
     try:
         notifications = await notification_service.get_notification_prefs(user_id)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return NotificationPrefsResponse(notifications=notifications)
+    return NotificationPrefsResponse(
+        notifications=NotificationPrefsPayload.model_validate(notifications)
+    )
 
 
 async def _update_notification_prefs_for_user(
@@ -109,18 +100,12 @@ async def _update_notification_prefs_for_user(
             request.notifications.model_dump(exclude_unset=True),
         )
     except NotificationPrefsValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return NotificationPrefsUpdateResponse(
-        notifications=notifications,
+        notifications=NotificationPrefsPayload.model_validate(notifications),
         updated=True,
     )
 
@@ -137,10 +122,7 @@ async def _reconcile_notification_plan_for_user(
             end_iso=request.endIso,
         )
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
     return NotificationPlanResponse(
         aiStyle=ai_style,

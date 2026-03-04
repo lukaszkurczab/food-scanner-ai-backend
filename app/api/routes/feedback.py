@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
+from app.api.http_errors import raise_bad_request, raise_database_error
 from app.core.exceptions import FirestoreServiceError
-from app.schemas.feedback import FeedbackCreateResponse
+from app.schemas.feedback import FeedbackCreateResponse, FeedbackItem
 from app.services import feedback_service
 from app.services.feedback_service import FeedbackValidationError
 
@@ -33,14 +34,11 @@ async def create_feedback_me(
             attachment=file,
         )
     except FeedbackValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+        raise_bad_request(exc)
     except FirestoreServiceError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database error",
-        ) from exc
+        raise_database_error(exc)
 
-    return FeedbackCreateResponse(feedback=feedback, created=True)
+    return FeedbackCreateResponse(
+        feedback=FeedbackItem.model_validate(feedback),
+        created=True,
+    )

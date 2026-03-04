@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import logging
 import re
 from typing import Any
-from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -13,7 +12,12 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.exceptions import FirestoreServiceError
-from app.db.firebase import get_firestore, get_storage_bucket
+from app.db.firebase import (
+    build_storage_download_url,
+    get_firestore,
+    get_storage_bucket,
+    get_storage_bucket_name,
+)
 from app.services import streak_service
 from app.services.username_service import normalize_username
 
@@ -91,14 +95,6 @@ def _validate_email(email: str) -> None:
 def _validate_avatar_url(avatar_url: str) -> None:
     if not avatar_url.startswith(("http://", "https://")):
         raise AvatarMetadataValidationError("Invalid avatar URL.")
-
-
-def _build_storage_download_url(bucket_name: str, object_path: str, token: str) -> str:
-    encoded_path = quote(object_path, safe="")
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/{bucket_name}/o/"
-        f"{encoded_path}?alt=media&token={token}"
-    )
 
 
 def _utc_timestamp() -> str:
@@ -187,7 +183,11 @@ async def upload_avatar(user_id: str, upload: UploadFile) -> tuple[str, str]:
     finally:
         upload.file.close()
 
-    avatar_url = _build_storage_download_url(bucket.name, object_path, token)
+    avatar_url = build_storage_download_url(
+        get_storage_bucket_name(bucket),
+        object_path,
+        token,
+    )
     return await set_avatar_metadata(user_id, avatar_url)
 
 
