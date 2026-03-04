@@ -3,6 +3,12 @@ from pytest_mock import MockerFixture
 from app.db import firebase
 
 
+def test_normalize_private_key_supports_double_escaped_newlines() -> None:
+    raw = "-----BEGIN PRIVATE KEY-----\\\\nsecret\\\\n-----END PRIVATE KEY-----\\\\n"
+    normalized = firebase._normalize_firebase_private_key(raw)
+    assert normalized == "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----\n"
+
+
 def test_get_firestore_uses_initialized_firebase_app(mocker) -> None:
     firebase.get_firestore.cache_clear()
 

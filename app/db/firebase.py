@@ -9,6 +9,7 @@ lifetime.
 
 from functools import lru_cache
 import logging
+import re
 from urllib.parse import quote
 
 import firebase_admin
@@ -22,10 +23,32 @@ from app.core.exceptions import FirestoreServiceError
 logger = logging.getLogger(__name__)
 
 
+def _normalize_firebase_private_key(raw_private_key: str) -> str:
+    """Normalize escaped newlines in private keys loaded from env vars.
+
+    Depending on how the environment is populated (dotenv, CI variables,
+    hosting panels), the key may contain `\n` or `\\n` literals instead of
+    actual line breaks.
+    """
+    private_key = raw_private_key.strip()
+    # Strip wrapping quotes if a secret manager injected them as literals.
+    if (
+        len(private_key) >= 2
+        and private_key[0] == private_key[-1]
+        and private_key[0] in {"'", '"'}
+    ):
+        private_key = private_key[1:-1]
+    private_key = re.sub(r"\\+n", "\n", private_key)
+    private_key = re.sub(r"\\+r", "\r", private_key)
+    return private_key.replace("\r\n", "\n")
+
+
 def _build_firebase_credential() -> credentials.Base:
     """Build Firebase credentials from env vars or a local service account file."""
     if settings.FIREBASE_CLIENT_EMAIL and settings.FIREBASE_PRIVATE_KEY:
-        normalized_private_key = settings.FIREBASE_PRIVATE_KEY.replace("\\n", "\n")
+        normalized_private_key = _normalize_firebase_private_key(
+            settings.FIREBASE_PRIVATE_KEY
+        )
         service_account_info = {
             "type": "service_account",
             "project_id": settings.FIREBASE_PROJECT_ID,
