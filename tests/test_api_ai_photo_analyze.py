@@ -10,7 +10,10 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_post_ai_photo_analyze_returns_ingredients_and_usage(mocker: MockerFixture) -> None:
+def test_post_ai_photo_analyze_returns_ingredients_and_usage(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
     increment_usage = mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
         return_value=(2.0, 20, "2026-03-02", 18.0),
@@ -32,15 +35,14 @@ def test_post_ai_photo_analyze_returns_ingredients_and_usage(mocker: MockerFixtu
     response = client.post(
         "/api/v1/ai/photo/analyze",
         json={
-            "userId": "abc",
             "imageBase64": "base64-image",
             "lang": "pl",
         },
+        headers=auth_headers("abc"),
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "userId": "abc",
         "ingredients": [
             {
                 "name": "Owsianka",
@@ -56,19 +58,25 @@ def test_post_ai_photo_analyze_returns_ingredients_and_usage(mocker: MockerFixtu
         "remaining": 18.0,
         "dateKey": "2026-03-02",
         "version": settings.VERSION,
+        "persistence": "backend_owned",
     }
     increment_usage.assert_called_once_with("abc")
     analyze_photo.assert_called_once_with("base64-image", lang="pl")
 
 
-def test_post_ai_photo_analyze_requires_required_fields() -> None:
-    response = client.post("/api/v1/ai/photo/analyze", json={"userId": "abc"})
+def test_post_ai_photo_analyze_requires_required_fields(auth_headers) -> None:
+    response = client.post(
+        "/api/v1/ai/photo/analyze",
+        json={},
+        headers=auth_headers("abc"),
+    )
 
     assert response.status_code == 422
 
 
 def test_post_ai_photo_analyze_returns_429_when_limit_is_exceeded(
     mocker: MockerFixture,
+    auth_headers,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
@@ -77,7 +85,8 @@ def test_post_ai_photo_analyze_returns_429_when_limit_is_exceeded(
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
-        json={"userId": "abc", "imageBase64": "base64-image"},
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
     )
 
     assert response.status_code == 429
@@ -86,6 +95,7 @@ def test_post_ai_photo_analyze_returns_429_when_limit_is_exceeded(
 
 def test_post_ai_photo_analyze_returns_500_when_firestore_fails(
     mocker: MockerFixture,
+    auth_headers,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
@@ -94,7 +104,8 @@ def test_post_ai_photo_analyze_returns_500_when_firestore_fails(
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
-        json={"userId": "abc", "imageBase64": "base64-image"},
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
     )
 
     assert response.status_code == 500
@@ -103,6 +114,7 @@ def test_post_ai_photo_analyze_returns_500_when_firestore_fails(
 
 def test_post_ai_photo_analyze_returns_503_when_openai_fails(
     mocker: MockerFixture,
+    auth_headers,
 ) -> None:
     mocker.patch(
         "app.api.routes.ai.ai_usage_service.increment_usage",
@@ -115,8 +127,32 @@ def test_post_ai_photo_analyze_returns_503_when_openai_fails(
 
     response = client.post(
         "/api/v1/ai/photo/analyze",
-        json={"userId": "abc", "imageBase64": "base64-image"},
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("abc"),
     )
 
     assert response.status_code == 503
     assert response.json() == {"detail": "AI service unavailable"}
+
+
+def test_post_ai_photo_analyze_uses_uid_from_token(
+    auth_headers,
+    mocker: MockerFixture,
+) -> None:
+    increment_usage = mocker.patch(
+        "app.api.routes.ai.ai_usage_service.increment_usage",
+        return_value=(1.0, 20, "2026-03-02", 19.0),
+    )
+    mocker.patch(
+        "app.api.routes.ai.openai_service.analyze_photo",
+        return_value=[],
+    )
+
+    response = client.post(
+        "/api/v1/ai/photo/analyze",
+        json={"imageBase64": "base64-image"},
+        headers=auth_headers("other-user"),
+    )
+
+    assert response.status_code == 200
+    increment_usage.assert_called_once_with("other-user")

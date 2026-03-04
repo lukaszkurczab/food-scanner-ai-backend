@@ -3,7 +3,7 @@
 ## Purpose
 
 This backend provides the API layer for the Fitaly mobile app.
-It handles health/status endpoints now and is prepared for AI, Firebase/Firestore, and observability integrations.
+It owns AI execution for the mobile app and exposes the server-side entrypoints used by chat, meal text analysis, photo analysis, logging, and supporting integrations.
 
 ## Tech Stack
 
@@ -82,7 +82,7 @@ Set the foundation-stage environment variables before starting the API:
 - `FIREBASE_PROJECT_ID` - Google Cloud project ID used by Firebase Admin and Firestore.
 - `GOOGLE_APPLICATION_CREDENTIALS` - absolute path to the Firebase service account JSON key used during backend startup.
 - `CORS_ORIGINS` - comma-separated list of allowed client origins. For local development you can use `CORS_ORIGINS=*`, but production should always list concrete domains.
-- `OPENAI_API_KEY` - required for the OpenAI service used by `/api/v1/ai/ask`.
+- `OPENAI_API_KEY` - required for backend-managed AI endpoints such as `/api/v1/ai/ask` and `/api/v1/ai/photo/analyze`.
 - `AI_DAILY_LIMIT_FREE` - daily AI request limit for free users, used by `/api/v1/ai/usage` and `/api/v1/ai/ask`.
 
 Run the application locally:
@@ -123,7 +123,6 @@ Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/CaloriAI/food-scanner-a
 | `SENTRY_DSN` | No | empty | Sentry project DSN; empty disables Sentry |
 | `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
 | `AI_DAILY_LIMIT_FREE` | No | `20` | Daily AI quota for free users |
-| `USE_NEW_AI_BACKEND` | No | `false` | Feature flag for backend-driven AI flow |
 | `PORT` | Railway only | set by Railway | Runtime HTTP port |
 
 Example local `.env`:
@@ -144,7 +143,6 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY----
 SENTRY_DSN=https://xxxx.ingest.sentry.io/xxxx
 SENTRY_ENVIRONMENT=development
 AI_DAILY_LIMIT_FREE=20
-USE_NEW_AI_BACKEND=false
 ```
 
 ## Railway Deployment
@@ -164,7 +162,7 @@ For local development you can either set `GOOGLE_APPLICATION_CREDENTIALS` to the
 1. Create a new Railway project and connect it to the repository that contains this backend.
 2. If the repository is a monorepo, set the Railway working directory to the backend folder that contains `app/main.py` and this `README.md`.
 3. Open the `Variables` tab and add every variable from `.env.example` without surrounding quotes.
-4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_DAILY_LIMIT_FREE`, `ENVIRONMENT`, `DEBUG`, `CORS_ORIGINS`, and `USE_NEW_AI_BACKEND`.
+4. Pay special attention to these values: `OPENAI_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `AI_DAILY_LIMIT_FREE`, `ENVIRONMENT`, `DEBUG`, and `CORS_ORIGINS`.
 5. Prefer setting `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY` directly in Railway. Use `GOOGLE_APPLICATION_CREDENTIALS` only as a fallback when your deploy process explicitly creates a service account JSON file at runtime.
 6. Set the start command to the Gunicorn command below, or rely on the repository `Procfile`.
 
@@ -223,15 +221,15 @@ Example response:
 }
 ```
 
-`POST /api/v1/ai/ask` accepts a chat request, checks content policy, sanitizes the prompt, increments usage, and forwards the message to OpenAI.
+`POST /api/v1/ai/ask` is the single backend AI text entrypoint used by the mobile app. It accepts chat-style requests, checks content policy, sanitizes the prompt, increments usage, and forwards the request to OpenAI. User identity is derived from the Bearer token and chat persistence is backend-owned.
 
 Example request:
 
 ```json
 {
-  "userId": "abc",
   "message": "Suggest a simple dinner",
   "context": {
+    "actionType": "chat",
     "weightKg": 78,
     "goal": "fat loss"
   }
@@ -247,9 +245,12 @@ Example response:
   "usageCount": 4,
   "remaining": 16,
   "dateKey": "2026-03-01",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "persistence": "backend_owned"
 }
 ```
+
+`POST /api/v1/ai/photo/analyze` is the backend photo-analysis entrypoint used by the mobile app for meal-photo AI flows.
 
 Error responses:
 
@@ -285,7 +286,7 @@ All responses include the `X-Request-ID` header. This identifier is attached to 
 
 ## Client Error Log Endpoint
 
-`POST /api/v1/logs/error` accepts frontend error reports and forwards them to the backend logger. If Sentry is enabled, these events can also be forwarded there through the centralized logging service.
+`POST /api/v1/logs/error` accepts frontend error reports and forwards them to the backend logger. If Sentry is enabled, these events can also be forwarded there through the centralized logging service. The endpoint accepts anonymous reports, but when a valid Bearer token is present the backend derives the user identity from the token and ignores any client-supplied user identifier.
 
 Request body fields:
 
@@ -293,7 +294,13 @@ Request body fields:
 - `message` - human-readable error message
 - `stack` - optional stack trace string
 - `context` - optional JSON object with extra metadata
-- `userId` - optional user identifier
+
+Payload limits:
+
+- `source` - up to 120 characters
+- `message` - up to 2000 characters
+- `stack` - up to 20000 characters
+- `context` - serialized JSON up to 8000 characters
 
 Example request:
 
@@ -305,8 +312,7 @@ Example request:
   "context": {
     "platform": "ios",
     "appVersion": "1.2.0"
-  },
-  "userId": "abc123"
+  }
 }
 ```
 

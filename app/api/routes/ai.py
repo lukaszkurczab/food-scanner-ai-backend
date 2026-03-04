@@ -1,9 +1,13 @@
 import logging
 from time import perf_counter
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
+from app.api.deps import (
+    AuthenticatedUser,
+    get_required_authenticated_user,
+)
 from app.core.config import settings
 from app.core.exceptions import (
     AiUsageLimitExceededError,
@@ -12,18 +16,26 @@ from app.core.exceptions import (
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
+from app.schemas.ai_common import BACKEND_OWNED_PERSISTENCE
 from app.schemas.ai_photo import (
     AiPhotoAnalyzeRequest,
     AiPhotoAnalyzeResponse,
     AiPhotoIngredient,
 )
+from app.schemas.ai_text_meal import (
+    AiTextMealAnalyzeRequest,
+    AiTextMealAnalyzeResponse,
+    AiTextMealIngredient,
+)
 from app.services import (
+    ai_chat_prompt_service,
     ai_gateway_logger,
     ai_gateway_service,
     ai_usage_service,
     content_guard_service,
     openai_service,
     sanitization_service,
+    text_meal_service,
 )
 
 router = APIRouter()
@@ -37,6 +49,15 @@ def _resolve_language(request: AiAskRequest) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return "pl"
+
+
+def _resolve_action_type(request: AiAskRequest) -> str:
+    if request.context:
+        for key in ("actionType", "action_type"):
+            value = request.context.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return "chat"
 
 
 def _get_local_answer(message: str, language: str) -> str:
@@ -75,9 +96,30 @@ async def _log_gateway_result(
         )
 
 
+def _build_ai_ask_response(
+    *,
+    reply: str,
+    usage_count: float,
+    remaining: float,
+    date_key: str,
+) -> AiAskResponse:
+    return AiAskResponse(
+        reply=reply,
+        usageCount=usage_count,
+        remaining=remaining,
+        dateKey=date_key,
+        version=settings.VERSION,
+        persistence=BACKEND_OWNED_PERSISTENCE,
+    )
+
+
 @router.post("/ai/ask", response_model=AiAskResponse)
-async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
+async def ask_ai(
+    request: AiAskRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> AiAskResponse | JSONResponse:
     started_at = perf_counter()
+    user_id = current_user.uid
 
     try:
         content_guard_service.check_allowed(request.message)
@@ -88,25 +130,45 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
         ) from exc
 
     language = _resolve_language(request)
+    action_type = _resolve_action_type(request)
     gateway_result: ai_gateway_service.GatewayResult = {
         "decision": "FORWARD",
         "reason": "GATEWAY_DISABLED",
         "score": 1.0,
         "credit_cost": 1.0,
     }
-    if settings.AI_GATEWAY_ENABLED:
+    if settings.AI_GATEWAY_ENABLED and action_type == "chat":
         gateway_result = ai_gateway_service.evaluate_request(
-            request.userId,
-            "chat",
+            user_id,
+            action_type,
             request.message,
             language=language,
         )
+    elif action_type != "chat":
+        gateway_result = {
+            "decision": "FORWARD",
+            "reason": "NON_CHAT_BYPASS",
+            "score": 1.0,
+            "credit_cost": 1.0,
+        }
 
-    sanitized_message = sanitization_service.sanitize_request(request.message, request.context)
+    sanitized_context = sanitization_service.sanitize_context(request.context)
+    sanitized_message = sanitization_service.sanitize_request(
+        request.message, sanitized_context
+    )
+    prompt_message = (
+        ai_chat_prompt_service.build_chat_prompt(
+            sanitized_message,
+            sanitized_context,
+            language=language,
+        )
+        if action_type == "chat"
+        else sanitized_message
+    )
 
     try:
         usage_count, daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
-            request.userId,
+            user_id,
             cost=gateway_result["credit_cost"],
         )
     except AiUsageLimitExceededError as exc:
@@ -122,8 +184,8 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
 
     if gateway_result["decision"] == "REJECT":
         await _log_gateway_result(
-            user_id=request.userId,
-            action_type="chat",
+            user_id=user_id,
+            action_type=action_type,
             message=request.message,
             language=language,
             result=gateway_result,
@@ -139,24 +201,22 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
 
     if gateway_result["decision"] == "LOCAL_ANSWER":
         await _log_gateway_result(
-            user_id=request.userId,
-            action_type="chat",
+            user_id=user_id,
+            action_type=action_type,
             message=request.message,
             language=language,
             result=gateway_result,
             execution_time_ms=(perf_counter() - started_at) * 1000,
         )
-        return AiAskResponse(
-            userId=request.userId,
+        return _build_ai_ask_response(
             reply=_get_local_answer(request.message, language),
-            usageCount=usage_count,
+            usage_count=usage_count,
             remaining=remaining,
-            dateKey=date_key,
-            version=settings.VERSION,
+            date_key=date_key,
         )
 
     try:
-        reply = await openai_service.ask_chat(sanitized_message)
+        reply = await openai_service.ask_chat(prompt_message)
     except OpenAIServiceError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -164,8 +224,8 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
         ) from exc
 
     await _log_gateway_result(
-        user_id=request.userId,
-        action_type="chat",
+        user_id=user_id,
+        action_type=action_type,
         message=request.message,
         language=language,
         result=gateway_result,
@@ -173,21 +233,23 @@ async def ask_ai(request: AiAskRequest) -> AiAskResponse | JSONResponse:
         execution_time_ms=(perf_counter() - started_at) * 1000,
     )
 
-    return AiAskResponse(
-        userId=request.userId,
+    return _build_ai_ask_response(
         reply=reply,
-        usageCount=usage_count,
+        usage_count=usage_count,
         remaining=remaining,
-        dateKey=date_key,
-        version=settings.VERSION,
+        date_key=date_key,
     )
 
 
 @router.post("/ai/photo/analyze", response_model=AiPhotoAnalyzeResponse)
-async def analyze_photo_ai(request: AiPhotoAnalyzeRequest) -> AiPhotoAnalyzeResponse:
+async def analyze_photo_ai(
+    request: AiPhotoAnalyzeRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> AiPhotoAnalyzeResponse:
+    user_id = current_user.uid
     try:
         usage_count, _daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
-            request.userId
+            user_id
         )
     except AiUsageLimitExceededError as exc:
         raise HTTPException(
@@ -212,10 +274,52 @@ async def analyze_photo_ai(request: AiPhotoAnalyzeRequest) -> AiPhotoAnalyzeResp
         ) from exc
 
     return AiPhotoAnalyzeResponse(
-        userId=request.userId,
         ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
         usageCount=usage_count,
         remaining=remaining,
         dateKey=date_key,
         version=settings.VERSION,
+        persistence=BACKEND_OWNED_PERSISTENCE,
+    )
+
+
+@router.post("/ai/text-meal/analyze", response_model=AiTextMealAnalyzeResponse)
+async def analyze_text_meal_ai(
+    request: AiTextMealAnalyzeRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> AiTextMealAnalyzeResponse:
+    user_id = current_user.uid
+    try:
+        usage_count, _daily_limit, date_key, remaining = await ai_usage_service.increment_usage(
+            user_id
+        )
+    except AiUsageLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="AI usage limit exceeded",
+        ) from exc
+    except FirestoreServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        ) from exc
+
+    try:
+        ingredients = await text_meal_service.analyze_text_meal(
+            request.payload,
+            lang=request.lang,
+        )
+    except OpenAIServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable",
+        ) from exc
+
+    return AiTextMealAnalyzeResponse(
+        ingredients=[AiTextMealIngredient(**ingredient) for ingredient in ingredients],
+        usageCount=usage_count,
+        remaining=remaining,
+        dateKey=date_key,
+        version=settings.VERSION,
+        persistence=BACKEND_OWNED_PERSISTENCE,
     )

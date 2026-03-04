@@ -11,8 +11,9 @@ from functools import lru_cache
 import logging
 
 import firebase_admin
-from firebase_admin import credentials, firestore as admin_firestore
+from firebase_admin import credentials, firestore as admin_firestore, storage as admin_storage
 from google.cloud import firestore
+from google.cloud.storage import bucket as storage_bucket
 
 from app.core.config import settings
 
@@ -48,9 +49,15 @@ def init_firebase() -> firebase_admin.App:
 
     try:
         credential = _build_firebase_credential()
+        options = {"projectId": settings.FIREBASE_PROJECT_ID}
+        storage_bucket = settings.FIREBASE_STORAGE_BUCKET.strip()
+        if not storage_bucket and settings.FIREBASE_PROJECT_ID:
+            storage_bucket = f"{settings.FIREBASE_PROJECT_ID}.appspot.com"
+        if storage_bucket:
+            options["storageBucket"] = storage_bucket
         return firebase_admin.initialize_app(
             credential=credential,
-            options={"projectId": settings.FIREBASE_PROJECT_ID},
+            options=options,
         )
     except Exception:
         logger.exception("Failed to initialize Firebase Admin SDK.")
@@ -67,3 +74,9 @@ def get_firestore() -> firestore.Client:
     """
     app = init_firebase()
     return admin_firestore.client(app=app)
+
+
+@lru_cache()
+def get_storage_bucket() -> storage_bucket.Bucket:
+    app = init_firebase()
+    return admin_storage.bucket(app=app)

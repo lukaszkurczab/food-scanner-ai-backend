@@ -1,8 +1,8 @@
 from pydantic import BaseModel, Field
+from app.schemas.ai_common import AiPersistence
 
 
 class AiPhotoAnalyzeRequest(BaseModel):
-    userId: str = Field(min_length=1)
     imageBase64: str = Field(min_length=1)
     lang: str = Field(default="en", min_length=2, max_length=10)
 
@@ -18,9 +18,9 @@ class AiPhotoIngredient(BaseModel):
 
 
 class AiPhotoAnalyzeResponse(BaseModel):
-    userId: str
     ingredients: list[AiPhotoIngredient]
     usageCount: float
     remaining: float
     dateKey: str
     version: str
+    persistence: AiPersistence

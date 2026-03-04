@@ -197,3 +197,15 @@ For each change-set, include:
 - No secrets in code or logs.
 - No breaking API contract changes without explicit confirmation.
 - No silent fallback that hides production failures unless explicitly requested.
+
+## Frontend sync
+
+During tasks check if changes require otrher changes on frontend part (food-scanner-ai)
+
+# Firebase
+
+Durign work with firebase check firebaseRules.md from frontend repo and if it is necessery suggerst changes
+
+# After
+
+After finishig task suggest if there is still something to do or this part is done

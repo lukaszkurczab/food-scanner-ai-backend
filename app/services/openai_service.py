@@ -7,6 +7,7 @@ mock it directly instead of touching the external OpenAI SDK.
 import asyncio
 import json
 import logging
+import re
 from typing import Any, NotRequired, TypedDict
 
 import openai
@@ -77,12 +78,20 @@ def _coerce_number(value: Any) -> float:
     if isinstance(value, str):
         try:
             return float(value)
-        except ValueError as exc:
-            raise OpenAIServiceError("OpenAI returned an invalid ingredient number.") from exc
+        except ValueError:
+            cleaned = re.sub(r"[^0-9.+-]", "", value)
+            if cleaned:
+                try:
+                    return float(cleaned)
+                except ValueError as exc:
+                    raise OpenAIServiceError(
+                        "OpenAI returned an invalid ingredient number."
+                    ) from exc
+            raise OpenAIServiceError("OpenAI returned an invalid ingredient number.")
     raise OpenAIServiceError("OpenAI returned an invalid ingredient number.")
 
 
-def _parse_ingredients(raw: str) -> list[AnalyzedIngredient]:
+def parse_ingredients_reply(raw: str) -> list[AnalyzedIngredient]:
     parsed = _parse_json_array(raw)
     ingredients: list[AnalyzedIngredient] = []
 
@@ -94,13 +103,26 @@ def _parse_ingredients(raw: str) -> list[AnalyzedIngredient]:
         if not isinstance(name, str) or not name.strip():
             raise OpenAIServiceError("OpenAI returned an invalid ingredient name.")
 
+        amount = _coerce_number(item.get("amount"))
+        protein = _coerce_number(item.get("protein"))
+        fat = _coerce_number(item.get("fat"))
+        carbs = _coerce_number(item.get("carbs"))
+        if amount <= 0:
+            raise OpenAIServiceError("OpenAI returned an invalid ingredient amount.")
+
+        kcal_value = item.get("kcal")
+        try:
+            kcal = _coerce_number(kcal_value)
+        except OpenAIServiceError:
+            kcal = protein * 4 + carbs * 4 + fat * 9
+
         ingredient: AnalyzedIngredient = {
             "name": name.strip(),
-            "amount": _coerce_number(item.get("amount")),
-            "protein": _coerce_number(item.get("protein")),
-            "fat": _coerce_number(item.get("fat")),
-            "carbs": _coerce_number(item.get("carbs")),
-            "kcal": _coerce_number(item.get("kcal")),
+            "amount": amount,
+            "protein": protein,
+            "fat": fat,
+            "carbs": carbs,
+            "kcal": kcal,
         }
 
         unit = item.get("unit")
@@ -197,4 +219,4 @@ async def analyze_photo(
         raise OpenAIServiceError("OpenAI photo analysis failed.") from exc
 
     reply = _extract_reply_content(response)
-    return _parse_ingredients(reply)
+    return parse_ingredients_reply(reply)

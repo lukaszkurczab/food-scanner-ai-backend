@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     FIREBASE_CLIENT_EMAIL: str = ""
     FIREBASE_PRIVATE_KEY: str = ""
+    FIREBASE_STORAGE_BUCKET: str = ""
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
 
