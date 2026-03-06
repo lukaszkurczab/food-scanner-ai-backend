@@ -66,14 +66,15 @@ def _normalize_time(raw: object) -> dict[str, int]:
 def _normalize_days(raw: object) -> list[int]:
     if not isinstance(raw, list):
         raise NotificationValidationError("Invalid notification days.")
+    raw_days: list[object] = raw
     days = sorted(
         {
             int(day)
-            for day in raw
+            for day in raw_days
             if isinstance(day, int) and 0 <= day <= 6
         }
     )
-    if len(days) != len(raw):
+    if len(days) != len(raw_days):
         raise NotificationValidationError("Invalid notification days.")
     return days or list(DEFAULT_DAYS)
 
@@ -156,14 +157,15 @@ def _normalize_weekdays(raw: object) -> list[int] | None:
         return None
     if not isinstance(raw, list):
         raise NotificationPrefsValidationError("Invalid weekdays.")
+    raw_days: list[object] = raw
     days = sorted(
         {
             int(day)
-            for day in raw
+            for day in raw_days
             if isinstance(day, int) and 0 <= day <= 6
         }
     )
-    if len(days) != len(raw):
+    if len(days) != len(raw_days):
         raise NotificationPrefsValidationError("Invalid weekdays.")
     return days
 

@@ -2,13 +2,14 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict, cast
 from uuid import uuid4
 
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
 from app.db.firebase import (
@@ -59,6 +60,19 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _coerce_float(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _normalize_tags(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -73,23 +87,24 @@ def _normalize_ingredients(value: Any) -> list[dict[str, Any]]:
     for raw in value:
         if not isinstance(raw, dict):
             continue
+        raw_map = cast(dict[str, object], raw)
 
-        item_id = _as_string(raw.get("id"))
-        name = _as_string(raw.get("name"))
+        item_id = _as_string(raw_map.get("id"))
+        name = _as_string(raw_map.get("name"))
         if not item_id or not name:
             continue
 
-        unit = _as_string(raw.get("unit"))
+        unit = _as_string(raw_map.get("unit"))
         items.append(
             {
                 "id": item_id,
                 "name": name,
-                "amount": float(raw.get("amount") or 0),
+                "amount": _coerce_float(raw_map.get("amount")),
                 "unit": unit if unit in {"g", "ml"} else None,
-                "kcal": float(raw.get("kcal") or 0),
-                "protein": float(raw.get("protein") or 0),
-                "fat": float(raw.get("fat") or 0),
-                "carbs": float(raw.get("carbs") or 0),
+                "kcal": _coerce_float(raw_map.get("kcal")),
+                "protein": _coerce_float(raw_map.get("protein")),
+                "fat": _coerce_float(raw_map.get("fat")),
+                "carbs": _coerce_float(raw_map.get("carbs")),
             }
         )
 
@@ -109,12 +124,13 @@ def _compute_totals(ingredients: list[dict[str, Any]]) -> dict[str, float]:
 def _normalize_totals(value: Any, ingredients: list[dict[str, Any]]) -> dict[str, float]:
     if not isinstance(value, dict):
         return _compute_totals(ingredients)
+    value_map = cast(dict[str, object], value)
 
     return {
-        "protein": float(value.get("protein") or 0),
-        "fat": float(value.get("fat") or 0),
-        "carbs": float(value.get("carbs") or 0),
-        "kcal": float(value.get("kcal") or 0),
+        "protein": _coerce_float(value_map.get("protein")),
+        "fat": _coerce_float(value_map.get("fat")),
+        "carbs": _coerce_float(value_map.get("carbs")),
+        "kcal": _coerce_float(value_map.get("kcal")),
     }
 
 
@@ -246,17 +262,25 @@ def _apply_history_filters(
     timestamp_end: str | None = None,
 ) -> firestore.Query:
     if calories is not None:
-        query = query.where("totals.kcal", ">=", calories[0]).where("totals.kcal", "<=", calories[1])
+        query = query.where(filter=FieldFilter("totals.kcal", ">=", calories[0])).where(
+            filter=FieldFilter("totals.kcal", "<=", calories[1])
+        )
     if protein is not None:
-        query = query.where("totals.protein", ">=", protein[0]).where("totals.protein", "<=", protein[1])
+        query = query.where(filter=FieldFilter("totals.protein", ">=", protein[0])).where(
+            filter=FieldFilter("totals.protein", "<=", protein[1])
+        )
     if carbs is not None:
-        query = query.where("totals.carbs", ">=", carbs[0]).where("totals.carbs", "<=", carbs[1])
+        query = query.where(filter=FieldFilter("totals.carbs", ">=", carbs[0])).where(
+            filter=FieldFilter("totals.carbs", "<=", carbs[1])
+        )
     if fat is not None:
-        query = query.where("totals.fat", ">=", fat[0]).where("totals.fat", "<=", fat[1])
+        query = query.where(filter=FieldFilter("totals.fat", ">=", fat[0])).where(
+            filter=FieldFilter("totals.fat", "<=", fat[1])
+        )
     if timestamp_start is not None:
-        query = query.where("timestamp", ">=", timestamp_start)
+        query = query.where(filter=FieldFilter("timestamp", ">=", timestamp_start))
     if timestamp_end is not None:
-        query = query.where("timestamp", "<=", timestamp_end)
+        query = query.where(filter=FieldFilter("timestamp", "<=", timestamp_end))
     return query
 
 
@@ -275,7 +299,7 @@ async def list_history(
     meals_ref = _meals_collection(user_id)
 
     try:
-        query = meals_ref.where("deleted", "==", False).order_by(
+        query = meals_ref.where(filter=FieldFilter("deleted", "==", False)).order_by(
             "timestamp",
             direction=firestore.Query.DESCENDING,
         ).order_by(
@@ -297,7 +321,7 @@ async def list_history(
             query = (
                 query.start_after([cursor_timestamp, cursor_document_id])
                 if cursor_document_id
-                else query.where("timestamp", "<", cursor_timestamp)
+                else query.where(filter=FieldFilter("timestamp", "<", cursor_timestamp))
             )
         snapshots = list(query.limit(limit_count).stream())
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
@@ -332,7 +356,7 @@ async def list_changes(
             query = (
                 query.start_after([updated_at, document_id])
                 if document_id
-                else query.where("updatedAt", ">", updated_at)
+                else query.where(filter=FieldFilter("updatedAt", ">", updated_at))
             )
         snapshots = list(query.limit(limit_count).stream())
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:

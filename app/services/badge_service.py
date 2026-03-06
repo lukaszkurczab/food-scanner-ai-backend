@@ -119,7 +119,7 @@ def _normalize_badge_snapshot(snapshot: firestore.DocumentSnapshot) -> dict[str,
 @firestore.transactional
 def _reconcile_premium_badges_transaction(
     transaction: firestore.Transaction,
-    badges_collection: firestore.CollectionReference,
+    badges_collection: Any,
     is_premium: bool,
     now_ms: int,
 ) -> tuple[list[str], bool]:

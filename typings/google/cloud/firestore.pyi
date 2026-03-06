@@ -1,0 +1,93 @@
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from typing import Any, ParamSpec, TypeVar
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+DELETE_FIELD: object
+
+
+class Query:
+    ASCENDING: str
+    DESCENDING: str
+
+    def where(
+        self,
+        field_path: str | None = ...,
+        op_string: str | None = ...,
+        value: Any | None = ...,
+        *,
+        filter: Any | None = ...,
+    ) -> Query: ...
+    def order_by(self, field_path: str, *, direction: str = ...) -> Query: ...
+    def limit(self, count: int) -> Query: ...
+    def start_after(self, values: Sequence[Any]) -> Query: ...
+    def stream(self) -> Iterator[DocumentSnapshot]: ...
+    def get(self) -> list[DocumentSnapshot]: ...
+
+
+class DocumentReference:
+    id: str
+
+    def get(
+        self,
+        field_paths: Iterable[str] | None = ...,
+        transaction: Transaction | None = ...,
+        retry: Any | None = ...,
+        timeout: float | None = ...,
+    ) -> DocumentSnapshot: ...
+    def set(self, document_data: dict[str, Any], merge: bool | list[str] = ...) -> None: ...
+    def update(self, field_updates: dict[str, Any]) -> None: ...
+    def delete(self) -> None: ...
+    def collection(self, collection_id: str) -> CollectionReference: ...
+
+
+class DocumentSnapshot:
+    id: str
+    exists: bool
+    reference: DocumentReference
+
+    def to_dict(self) -> dict[str, Any] | None: ...
+
+
+class CollectionReference(Query):
+    id: str
+
+    def document(self, document_id: str | None = ...) -> DocumentReference: ...
+    def add(
+        self, document_data: dict[str, Any], document_id: str | None = ...
+    ) -> tuple[Any, Any]: ...
+
+
+class WriteBatch:
+    def set(
+        self,
+        reference: DocumentReference,
+        document_data: dict[str, Any],
+        merge: bool | list[str] = ...,
+    ) -> None: ...
+    def update(self, reference: DocumentReference, field_updates: dict[str, Any]) -> None: ...
+    def delete(self, reference: DocumentReference) -> None: ...
+    def commit(self) -> list[Any]: ...
+
+
+class Transaction:
+    def set(
+        self,
+        reference: DocumentReference,
+        document_data: dict[str, Any],
+        merge: bool | list[str] = ...,
+    ) -> None: ...
+    def update(self, reference: DocumentReference, field_updates: dict[str, Any]) -> None: ...
+    def delete(self, reference: DocumentReference) -> None: ...
+    def get(self, reference: DocumentReference) -> DocumentSnapshot: ...
+
+
+class Client:
+    def collection(self, collection_id: str) -> CollectionReference: ...
+    def document(self, document_path: str) -> DocumentReference: ...
+    def batch(self) -> WriteBatch: ...
+    def transaction(self, **kwargs: Any) -> Transaction: ...
+
+
+def transactional(to_wrap: Callable[_P, _T]) -> Callable[_P, _T]: ...

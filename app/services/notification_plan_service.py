@@ -1,6 +1,6 @@
 """Backend-owned notification eligibility planning."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import logging
 from typing import Literal, cast
@@ -86,31 +86,33 @@ def _parse_text(value: object) -> str | None:
 def _parse_notification_doc(document_id: str, raw: object) -> NotificationPlan | None:
     if not isinstance(raw, dict):
         return None
+    raw_map = cast(dict[str, object], raw)
 
-    notif_type_raw = raw.get("type")
+    notif_type_raw = raw_map.get("type")
     if not isinstance(notif_type_raw, str) or notif_type_raw not in VALID_NOTIFICATION_TYPES:
         return None
     notif_type = cast(Literal["meal_reminder", "calorie_goal", "day_fill"], notif_type_raw)
 
-    time_raw = raw.get("time")
+    time_raw = raw_map.get("time")
+    time_map = cast(dict[str, object], time_raw) if isinstance(time_raw, dict) else {}
     time = NotificationTime(
-        hour=_clamp_hour(time_raw.get("hour") if isinstance(time_raw, dict) else None),
-        minute=_clamp_minute(time_raw.get("minute") if isinstance(time_raw, dict) else None),
+        hour=_clamp_hour(time_map.get("hour")),
+        minute=_clamp_minute(time_map.get("minute")),
     )
-    meal_kind = raw.get("mealKind")
+    meal_kind = raw_map.get("mealKind")
     normalized_meal_kind = cast(
         Literal["breakfast", "lunch", "dinner", "snack"] | None,
         meal_kind if isinstance(meal_kind, str) and meal_kind in VALID_MEAL_KINDS else None,
     )
-    kcal_by_hour_raw = raw.get("kcalByHour")
+    kcal_by_hour_raw = raw_map.get("kcalByHour")
 
     return NotificationPlan(
         id=document_id,
         type=notif_type,
-        enabled=bool(raw.get("enabled")),
-        text=_parse_text(raw.get("text")),
+        enabled=bool(raw_map.get("enabled")),
+        text=_parse_text(raw_map.get("text")),
         time=time,
-        days=_parse_days(raw.get("days")),
+        days=_parse_days(raw_map.get("days")),
         meal_kind=normalized_meal_kind,
         kcal_by_hour=float(kcal_by_hour_raw)
         if isinstance(kcal_by_hour_raw, (int, float))
@@ -153,12 +155,10 @@ def _evaluate_notification_plan(
 
     if notification.type == "meal_reminder":
         if notification.meal_kind is None:
-            return NotificationPlan(**{**notification.__dict__, "should_schedule": True})
-        return NotificationPlan(
-            **{
-                **notification.__dict__,
-                "should_schedule": not _has_meal_type_today(meals, notification.meal_kind),
-            }
+            return replace(notification, should_schedule=True)
+        return replace(
+            notification,
+            should_schedule=not _has_meal_type_today(meals, notification.meal_kind),
         )
 
     if notification.type == "calorie_goal":
@@ -168,20 +168,13 @@ def _evaluate_notification_plan(
             threshold = target_kcal
         should_schedule = _is_kcal_below_threshold(consumed, threshold)
         missing_kcal = max(0, round((threshold if threshold > 0 else 0) - consumed))
-        return NotificationPlan(
-            **{
-                **notification.__dict__,
-                "should_schedule": should_schedule,
-                "missing_kcal": missing_kcal,
-            }
+        return replace(
+            notification,
+            should_schedule=should_schedule,
+            missing_kcal=missing_kcal,
         )
 
-    return NotificationPlan(
-        **{
-            **notification.__dict__,
-            "should_schedule": len(meals) == 0,
-        }
-    )
+    return replace(notification, should_schedule=len(meals) == 0)
 
 
 def _parse_target_kcal(raw_user: dict[str, object]) -> float:

@@ -65,11 +65,14 @@ def _history_to_lines(value: Any) -> list[str]:
 
 
 def _summarize_meals(meals: Any) -> str:
-    if not isinstance(meals, list) or not meals:
+    if not isinstance(meals, list):
+        return "none"
+    meal_items: list[object] = meals
+    if not meal_items:
         return "none"
 
     normalized: list[tuple[str, str]] = []
-    for item in meals[:5]:
+    for item in meal_items[:5]:
         if not isinstance(item, dict):
             continue
         timestamp = _as_string(item.get("timestamp") or item.get("createdAt")) or ""
@@ -82,7 +85,7 @@ def _summarize_meals(meals: Any) -> str:
 
     normalized.sort(key=lambda item: item[0], reverse=True)
     preview = ",".join(f"{date}:{name}" for date, name in normalized[:5])
-    return f"{len(meals)}|{preview}"
+    return f"{len(meal_items)}|{preview}"
 
 
 def _tone_from_profile(profile: dict[str, Any]) -> str:

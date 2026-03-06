@@ -8,6 +8,7 @@ from typing import TypeAlias
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
 from app.db.firebase import get_firestore
@@ -442,7 +443,7 @@ async def sync_streak_from_meals(
         user_data = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else {}
         target_kcal = _parse_target_kcal(user_data)
 
-        meal_snapshots = list(meals_ref.where("deleted", "==", False).stream())
+        meal_snapshots = list(meals_ref.where(filter=FieldFilter("deleted", "==", False)).stream())
         daily_kcal: dict[str, float] = {}
         for snapshot in meal_snapshots:
             raw_meal = dict(snapshot.to_dict() or {})

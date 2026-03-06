@@ -1,6 +1,7 @@
 """Lightweight text classifier for AI gateway moderation decisions."""
 
 from __future__ import annotations
+# pyright: reportMissingImports=false
 
 from pathlib import Path
 from typing import Any

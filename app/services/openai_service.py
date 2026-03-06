@@ -9,6 +9,7 @@ import json
 import logging
 import re
 from typing import Any, NotRequired, TypedDict
+from typing import cast
 
 import openai
 
@@ -39,7 +40,9 @@ def _extract_reply_content(response: Any) -> str:
     if isinstance(first_choice, dict):
         reply = first_choice.get("message", {}).get("content")
     else:
-        reply = getattr(first_choice.message, "content", None)
+        first_choice_obj = cast(object, first_choice)
+        message = cast(Any, getattr(first_choice_obj, "message", None))
+        reply = cast(str | None, getattr(cast(object, message), "content", None))
 
     if not reply:
         raise OpenAIServiceError("OpenAI returned an empty response.")

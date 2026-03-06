@@ -9,6 +9,7 @@ from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.exceptions import FirestoreServiceError
 from app.db.firebase import (
@@ -59,7 +60,7 @@ async def list_changes(
             query = (
                 query.start_after([updated_at, document_id])
                 if document_id
-                else query.where("updatedAt", ">", updated_at)
+                else query.where(filter=FieldFilter("updatedAt", ">", updated_at))
             )
         snapshots = list(query.limit(limit_count).stream())
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:

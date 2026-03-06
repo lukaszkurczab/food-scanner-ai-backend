@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
 
 CONTROL_KEYS = {"language", "lang", "actionType", "action_type"}
@@ -70,7 +70,8 @@ def _sanitize_history(value: Any) -> list[Any]:
             continue
 
         if isinstance(item, dict):
-            next_item = dict(item)
+            source = cast(dict[str, Any], item)
+            next_item: dict[str, Any] = dict(source)
             for key in ("text", "content"):
                 raw = next_item.get(key)
                 if isinstance(raw, str):
@@ -88,7 +89,8 @@ def _sanitize_meals(value: Any) -> list[Any]:
     for item in value:
         if not isinstance(item, dict):
             continue
-        next_item = dict(item)
+        source = cast(dict[str, Any], item)
+        next_item: dict[str, Any] = dict(source)
         for key in ("name", "notes"):
             raw = next_item.get(key)
             if isinstance(raw, str):
@@ -102,7 +104,8 @@ def _sanitize_profile(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
 
-    sanitized = dict(value)
+    source = cast(dict[str, Any], value)
+    sanitized: dict[str, Any] = dict(source)
 
     for key in PROFILE_RANGE_KEYS:
         if key in sanitized:

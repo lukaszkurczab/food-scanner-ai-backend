@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -413,7 +413,7 @@ async def get_user_export_data(
         for document in prefs_documents:
             notifications_value = document.get("notifications")
             if isinstance(notifications_value, dict):
-                notification_prefs = dict(notifications_value)
+                notification_prefs = dict(cast(dict[str, Any], notifications_value))
                 break
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
