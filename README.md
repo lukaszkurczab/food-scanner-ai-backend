@@ -194,12 +194,7 @@ For Firebase and Firestore, generate a service account in the Firebase Console o
 
 ## AI Endpoints
 
-Set these values in `.env` before using AI endpoints:
-
-```env
-OPENAI_API_KEY=your_openai_key
-AI_DAILY_LIMIT_FREE=20
-```
+Before using AI endpoints, ensure `OPENAI_API_KEY` and `AI_DAILY_LIMIT_FREE` are set in `.env` (see `.env.example`).
 
 `GET /api/v1/ai/usage?userId=<id>` returns current daily AI usage.
 
