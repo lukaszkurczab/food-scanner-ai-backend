@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     FIREBASE_STORAGE_BUCKET: str = ""
     CORS_ORIGINS: str = ""
     SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "development"
 
     # Product limits
     AI_DAILY_LIMIT_FREE: int = Field(default=20, ge=1)

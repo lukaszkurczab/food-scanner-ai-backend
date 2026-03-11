@@ -182,7 +182,8 @@ GET https://<your-domain>/api/v1/version
 
 ### Sentry & Firestore notes
 
-Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish local, staging, and production events.
+Create a Sentry project in the Sentry dashboard, copy its DSN from the project settings, and set it as `SENTRY_DSN`. Use `SENTRY_ENVIRONMENT` to distinguish development, staging, and production events.
+Sentry initialization is skipped automatically when `ENVIRONMENT=local` and during `pytest` runs, so local tests do not send synthetic failures.
 
 For Firebase and Firestore, generate a service account in the Firebase Console or Google Cloud Console. On Railway, the preferred setup is to copy `client_email` into `FIREBASE_CLIENT_EMAIL` and `private_key` into `FIREBASE_PRIVATE_KEY`, keeping them as protected variables. For local development, you can still use the downloaded service account JSON file with `GOOGLE_APPLICATION_CREDENTIALS`. Never commit that JSON file to the repository, and rotate credentials if they are ever exposed.
 
