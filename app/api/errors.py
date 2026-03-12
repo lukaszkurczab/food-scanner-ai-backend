@@ -4,21 +4,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from app.core.exceptions import (
-    AiUsageLimitExceededError,
     ContentBlockedError,
     FirestoreServiceError,
     OpenAIServiceError,
 )
-
-
-async def handle_ai_limit_exceeded(
-    _request: Request,
-    _exc: Exception,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={"detail": "AI usage limit exceeded"},
-    )
 
 
 async def handle_content_blocked(
@@ -53,7 +42,6 @@ async def handle_firestore_service_error(
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Register shared exception handlers for domain/service errors."""
-    app.add_exception_handler(AiUsageLimitExceededError, handle_ai_limit_exceeded)
     app.add_exception_handler(ContentBlockedError, handle_content_blocked)
     app.add_exception_handler(OpenAIServiceError, handle_openai_service_error)
     app.add_exception_handler(FirestoreServiceError, handle_firestore_service_error)

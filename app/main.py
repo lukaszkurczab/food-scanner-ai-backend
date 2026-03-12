@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
 from app.api.middleware import request_logging
+from app.api.routes.webhooks import router as webhooks_router
 from app.api.router import api_router
 from app.core.api_version import (
     CURRENT_API_PREFIX,
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     )
     register_exception_handlers(app)
     app.include_router(api_router)
+    app.include_router(webhooks_router)
 
     try:
         get_firestore()

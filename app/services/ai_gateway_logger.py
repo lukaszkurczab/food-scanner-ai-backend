@@ -16,6 +16,7 @@ class GatewayLogExtras(TypedDict, total=False):
     responseTimeMs: float
     executionTimeMs: float
     profile: str
+    tier: str
 
 
 def log_gateway_decision(
@@ -28,6 +29,8 @@ def log_gateway_decision(
     response_time_ms: float | None = None,
     execution_time_ms: float | None = None,
     profile: str | None = None,
+    tier: str | None = None,
+    credit_cost: float | None = None,
 ) -> None:
     """Persist one AI gateway decision as a Firestore document."""
     db: firestore.Client = get_firestore()
@@ -40,7 +43,7 @@ def log_gateway_decision(
         "decision": result["decision"],
         "reason": result["reason"],
         "score": result["score"],
-        "creditCost": result["credit_cost"],
+        "creditCost": credit_cost if credit_cost is not None else result["credit_cost"],
         "language": language,
         "length": len(normalized_message),
     }
@@ -51,5 +54,7 @@ def log_gateway_decision(
         doc["executionTimeMs"] = round(execution_time_ms, 2)
     if profile:
         doc["profile"] = profile
+    if tier:
+        doc["tier"] = tier
 
     db.collection(COLLECTION_NAME).add(doc)

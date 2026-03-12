@@ -1,6 +1,7 @@
 import logging
+from datetime import datetime
 from time import perf_counter
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -13,11 +14,12 @@ from app.api.http_errors import (
 )
 from app.core.config import settings
 from app.core.exceptions import (
-    AiUsageLimitExceededError,
+    AiCreditsExhaustedError,
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
 from app.schemas.ai_common import AiPersistence, BACKEND_OWNED_PERSISTENCE
+from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 from app.schemas.ai_photo import (
     AiPhotoAnalyzeRequest,
     AiPhotoAnalyzeResponse,
@@ -30,9 +32,9 @@ from app.schemas.ai_text_meal import (
 )
 from app.services import (
     ai_chat_prompt_service,
+    ai_credits_service,
     ai_gateway_logger,
     ai_gateway_service,
-    ai_usage_service,
     openai_service,
     sanitization_service,
     text_meal_service,
@@ -43,10 +45,12 @@ logger = logging.getLogger(__name__)
 
 
 class AiResponseFields(TypedDict):
-    usageCount: float
-    dailyLimit: int
-    remaining: float
-    dateKey: str
+    balance: int
+    allocation: int
+    tier: Literal["free", "premium"]
+    periodStartAt: datetime
+    periodEndAt: datetime
+    costs: CreditCosts
     version: str
     persistence: AiPersistence
 
@@ -79,6 +83,8 @@ async def _log_gateway_result(
     response_time_ms: float | None = None,
     execution_time_ms: float | None = None,
     profile: str | None = None,
+    tier: Literal["free", "premium"] | None = None,
+    credit_cost: float | None = None,
 ) -> None:
     try:
         ai_gateway_logger.log_gateway_decision(
@@ -90,6 +96,8 @@ async def _log_gateway_result(
             response_time_ms=response_time_ms,
             execution_time_ms=execution_time_ms,
             profile=profile,
+            tier=tier,
+            credit_cost=credit_cost,
         )
     except Exception:
         logger.exception(
@@ -98,91 +106,84 @@ async def _log_gateway_result(
         )
 
 
-async def _increment_usage_or_raise(
-    user_id: str,
+async def _deduct_credits_or_raise(
     *,
-    cost: float = 1.0,
-    include_cost_kwarg: bool = False,
-) -> tuple[float, int, str, float]:
+    user_id: str,
+    cost: int,
+    action: str,
+) -> AiCreditsStatus:
     try:
-        if include_cost_kwarg:
-            usage_count, daily_limit, date_key, remaining = (
-                await ai_usage_service.increment_usage(user_id, cost=cost)
-            )
-        else:
-            usage_count, daily_limit, date_key, remaining = (
-                await ai_usage_service.increment_usage(user_id)
-            )
-    except AiUsageLimitExceededError:
-        usage_count, daily_limit, date_key = await ai_usage_service.get_usage(user_id)
+        return await ai_credits_service.deduct_credits(user_id, cost=cost, action=action)
+    except AiCreditsExhaustedError:
+        credits_status = await ai_credits_service.get_credits_status(user_id)
+        logger.warning(
+            "AI credits exhausted for requested action.",
+            extra={
+                "user_id": user_id,
+                "action": action,
+                "credit_cost": cost,
+                "tier": credits_status.tier,
+                "balance": credits_status.balance,
+                "allocation": credits_status.allocation,
+                "period_end_at": credits_status.periodEndAt.isoformat(),
+            },
+        )
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
-                "message": "AI usage limit exceeded",
-                "code": "AI_USAGE_LIMIT_EXCEEDED",
-                "usage": ai_usage_service.build_usage_status(
-                    usage_count=usage_count,
-                    daily_limit=daily_limit,
-                    date_key=date_key,
-                ),
+                "message": "AI credits exhausted",
+                "code": "AI_CREDITS_EXHAUSTED",
+                "credits": credits_status.model_dump(mode="json"),
             },
         )
 
-    return usage_count, daily_limit, date_key, remaining
 
-
-async def _refund_usage_after_ai_failure(
+async def _refund_credits_after_ai_failure(
     *,
     user_id: str,
-    date_key: str,
-    cost: float,
+    cost: int,
+    action: str,
     endpoint: str,
 ) -> None:
     try:
-        usage_count, _daily_limit, _refunded_date_key, remaining = (
-            await ai_usage_service.decrement_usage(
-                user_id,
-                cost=cost,
-                date_key=date_key,
-            )
+        credits_status = await ai_credits_service.refund_credits(
+            user_id,
+            cost=cost,
+            action=action,
         )
         logger.info(
-            "Refunded AI usage after upstream failure.",
+            "Refunded AI credits after upstream failure.",
             extra={
                 "user_id": user_id,
                 "endpoint": endpoint,
                 "cost": cost,
-                "usage_count": usage_count,
-                "remaining": remaining,
-                "date_key": date_key,
+                "balance": credits_status.balance,
+                "allocation": credits_status.allocation,
+                "tier": credits_status.tier,
             },
         )
     except Exception:
         logger.exception(
-            "Failed to refund AI usage after upstream failure.",
+            "Failed to refund AI credits after upstream failure.",
             extra={
                 "user_id": user_id,
                 "endpoint": endpoint,
                 "cost": cost,
-                "date_key": date_key,
             },
         )
 
 
-def _build_ai_response_fields(
+def _build_ai_response_fields_from_credits(
     *,
-    usage_count: float,
-    daily_limit: int,
-    remaining: float,
-    date_key: str,
+    credits_status: AiCreditsStatus,
 ) -> AiResponseFields:
     return {
-        **ai_usage_service.build_usage_status(
-            usage_count=usage_count,
-            daily_limit=daily_limit,
-            date_key=date_key,
-        ),
-        "remaining": remaining,
+        "balance": credits_status.balance,
+        "allocation": credits_status.allocation,
+        "tier": credits_status.tier,
+        "periodStartAt": credits_status.periodStartAt,
+        "periodEndAt": credits_status.periodEndAt,
+        "costs": credits_status.costs,
         "version": settings.VERSION,
         "persistence": BACKEND_OWNED_PERSISTENCE,
     }
@@ -191,19 +192,11 @@ def _build_ai_response_fields(
 def _build_ai_ask_response(
     *,
     reply: str,
-    usage_count: float,
-    daily_limit: int,
-    remaining: float,
-    date_key: str,
+    credits_status: AiCreditsStatus,
 ) -> AiAskResponse:
     return AiAskResponse(
         reply=reply,
-        **_build_ai_response_fields(
-            usage_count=usage_count,
-            daily_limit=daily_limit,
-            remaining=remaining,
-            date_key=date_key,
-        ),
+        **_build_ai_response_fields_from_credits(credits_status=credits_status),
     )
 
 
@@ -238,6 +231,14 @@ async def ask_ai(
             "credit_cost": 1.0,
         }
     if gateway_result["decision"] != "FORWARD":
+        tier: Literal["free", "premium"] | None = None
+        try:
+            tier = (await ai_credits_service.get_credits_status(user_id)).tier
+        except Exception:
+            logger.exception(
+                "Failed to resolve AI tier for gateway reject log.",
+                extra={"user_id": user_id, "action_type": action_type},
+            )
         await _log_gateway_result(
             user_id=user_id,
             action_type=action_type,
@@ -246,6 +247,8 @@ async def ask_ai(
             result=gateway_result,
             response_time_ms=(perf_counter() - started_at) * 1000,
             execution_time_ms=(perf_counter() - started_at) * 1000,
+            tier=tier,
+            credit_cost=0.0,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -271,19 +274,19 @@ async def ask_ai(
         else sanitized_message
     )
 
-    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(
-        user_id,
-        cost=gateway_result["credit_cost"],
-        include_cost_kwarg=True,
+    credits_status = await _deduct_credits_or_raise(
+        user_id=user_id,
+        cost=settings.AI_CREDIT_COST_CHAT,
+        action="chat",
     )
 
     try:
         reply = await openai_service.ask_chat(prompt_message)
     except OpenAIServiceError as exc:
-        await _refund_usage_after_ai_failure(
+        await _refund_credits_after_ai_failure(
             user_id=user_id,
-            date_key=date_key,
-            cost=gateway_result["credit_cost"],
+            cost=settings.AI_CREDIT_COST_CHAT,
+            action="chat_failure_refund",
             endpoint="/ai/ask",
         )
         raise_service_unavailable(exc, detail="AI service unavailable")
@@ -296,14 +299,14 @@ async def ask_ai(
         result=gateway_result,
         response_time_ms=(perf_counter() - started_at) * 1000,
         execution_time_ms=(perf_counter() - started_at) * 1000,
+        profile=credits_status.tier,
+        tier=credits_status.tier,
+        credit_cost=float(settings.AI_CREDIT_COST_CHAT),
     )
 
     return _build_ai_ask_response(
         reply=reply,
-        usage_count=usage_count,
-        daily_limit=daily_limit,
-        remaining=remaining,
-        date_key=date_key,
+        credits_status=credits_status,
     )
 
 
@@ -313,7 +316,11 @@ async def analyze_photo_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiPhotoAnalyzeResponse:
     user_id = current_user.uid
-    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(user_id)
+    credits_status = await _deduct_credits_or_raise(
+        user_id=user_id,
+        cost=settings.AI_CREDIT_COST_PHOTO,
+        action="photo_analysis",
+    )
 
     try:
         ingredients = await openai_service.analyze_photo(
@@ -321,22 +328,17 @@ async def analyze_photo_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
-        await _refund_usage_after_ai_failure(
+        await _refund_credits_after_ai_failure(
             user_id=user_id,
-            date_key=date_key,
-            cost=1.0,
+            cost=settings.AI_CREDIT_COST_PHOTO,
+            action="photo_analysis_failure_refund",
             endpoint="/ai/photo/analyze",
         )
         raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiPhotoAnalyzeResponse(
         ingredients=[AiPhotoIngredient(**ingredient) for ingredient in ingredients],
-        **_build_ai_response_fields(
-            usage_count=usage_count,
-            daily_limit=daily_limit,
-            remaining=remaining,
-            date_key=date_key,
-        ),
+        **_build_ai_response_fields_from_credits(credits_status=credits_status),
     )
 
 
@@ -346,7 +348,11 @@ async def analyze_text_meal_ai(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> AiTextMealAnalyzeResponse:
     user_id = current_user.uid
-    usage_count, daily_limit, date_key, remaining = await _increment_usage_or_raise(user_id)
+    credits_status = await _deduct_credits_or_raise(
+        user_id=user_id,
+        cost=settings.AI_CREDIT_COST_TEXT_MEAL,
+        action="text_meal_analysis",
+    )
 
     try:
         ingredients = await text_meal_service.analyze_text_meal(
@@ -354,20 +360,15 @@ async def analyze_text_meal_ai(
             lang=request.lang,
         )
     except OpenAIServiceError as exc:
-        await _refund_usage_after_ai_failure(
+        await _refund_credits_after_ai_failure(
             user_id=user_id,
-            date_key=date_key,
-            cost=1.0,
+            cost=settings.AI_CREDIT_COST_TEXT_MEAL,
+            action="text_meal_analysis_failure_refund",
             endpoint="/ai/text-meal/analyze",
         )
         raise_service_unavailable(exc, detail="AI service unavailable")
 
     return AiTextMealAnalyzeResponse(
         ingredients=[AiTextMealIngredient(**ingredient) for ingredient in ingredients],
-        **_build_ai_response_fields(
-            usage_count=usage_count,
-            daily_limit=daily_limit,
-            remaining=remaining,
-            date_key=date_key,
-        ),
+        **_build_ai_response_fields_from_credits(credits_status=credits_status),
     )

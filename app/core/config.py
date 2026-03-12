@@ -30,13 +30,21 @@ class Settings(BaseSettings):
     SENTRY_ENVIRONMENT: str = "development"
 
     # Product limits
-    AI_DAILY_LIMIT_FREE: int = Field(default=20, ge=1)
+    AI_CREDITS_FREE: int = Field(default=100, ge=0)
+    AI_CREDITS_PREMIUM: int = Field(default=800, ge=0)
+    AI_CREDIT_COST_CHAT: int = Field(default=1, ge=0)
+    AI_CREDIT_COST_TEXT_MEAL: int = Field(default=1, ge=0)
+    AI_CREDIT_COST_PHOTO: int = Field(default=5, ge=0)
     AI_GATEWAY_ENABLED: bool = True
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
     AI_GATEWAY_ML_ENABLED: bool = False
     AI_GATEWAY_ML_MODEL_PATH: Path = Path("models/ai_gateway_classifier.joblib")
     AI_GATEWAY_ML_THRESHOLD_OFF_TOPIC: float = Field(default=0.35, ge=0.0, le=1.0)
+
+    # Billing integrations
+    REVENUECAT_WEBHOOK_SECRET: str = ""
+    REVENUECAT_API_KEY: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

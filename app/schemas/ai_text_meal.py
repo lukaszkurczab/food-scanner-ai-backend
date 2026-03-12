@@ -1,7 +1,10 @@
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
+from app.schemas.ai_credits import CreditCosts
 from app.schemas.ai_common import AiPersistence
-from app.schemas.ai_usage import AiUsageStatus
 
 
 class AiTextMealPayload(BaseModel):
@@ -26,7 +29,13 @@ class AiTextMealIngredient(BaseModel):
     unit: str | None = None
 
 
-class AiTextMealAnalyzeResponse(AiUsageStatus):
+class AiTextMealAnalyzeResponse(BaseModel):
     ingredients: list[AiTextMealIngredient]
+    balance: int
+    allocation: int
+    tier: Literal["free", "premium"]
+    periodStartAt: datetime
+    periodEndAt: datetime
+    costs: CreditCosts
     version: str
     persistence: AiPersistence

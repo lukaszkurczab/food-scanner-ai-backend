@@ -25,6 +25,8 @@ def test_log_gateway_decision_persists_gateway_entry(mocker: MockerFixture) -> N
         response_time_ms=123.456,
         execution_time_ms=234.567,
         profile="free",
+        tier="free",
+        credit_cost=1.0,
     )
 
     client.collection.assert_called_once_with(COLLECTION_NAME)
@@ -42,3 +44,4 @@ def test_log_gateway_decision_persists_gateway_entry(mocker: MockerFixture) -> N
     assert payload["responseTimeMs"] == 123.46
     assert payload["executionTimeMs"] == 234.57
     assert payload["profile"] == "free"
+    assert payload["tier"] == "free"

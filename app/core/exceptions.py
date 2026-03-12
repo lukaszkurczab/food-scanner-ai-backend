@@ -1,8 +1,8 @@
 """Shared domain exceptions used across API, service, and DB layers."""
 
 
-class AiUsageLimitExceededError(Exception):
-    """Raised when daily AI usage exceeds the allowed limit."""
+class AiCreditsExhaustedError(Exception):
+    """Raised when AI credits are exhausted for a requested action."""
 
 
 class OpenAIServiceError(Exception):
