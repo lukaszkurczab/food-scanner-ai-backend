@@ -60,6 +60,7 @@ def _build_client(mocker: MockerFixture):
         raise AssertionError(f"Unexpected collection: {name}")
 
     client.collection.side_effect = _collection
+    client.transaction.return_value = FakeTransaction()
     credits_collection_ref.document.return_value = credits_document_ref
     return client, credits_collection_ref, credits_document_ref, transactions_collection_ref
 
@@ -282,6 +283,7 @@ def test_refresh_if_period_expired_clamps_end_of_month_anchor(mocker: MockerFixt
 def test_start_premium_cycle_sets_premium_allocation_and_period(mocker: MockerFixture) -> None:
     now = _iso_utc(2026, 4, 14)
     client, _collection_ref, document_ref, _transactions_collection_ref = _build_client(mocker)
+    transaction = client.transaction.return_value
     document_ref.get.return_value = _build_snapshot(mocker, exists=False)
 
     mocker.patch("app.services.ai_credits_service._log_credit_transaction")
@@ -296,8 +298,8 @@ def test_start_premium_cycle_sets_premium_allocation_and_period(mocker: MockerFi
         )
     )
 
-    document_ref.set.assert_called_once()
-    written_document = document_ref.set.call_args.args[0]
+    assert len(transaction.set_calls) == 1
+    written_document = transaction.set_calls[0][1]
     assert status.tier == "premium"
     assert status.balance == settings.AI_CREDITS_PREMIUM
     assert status.allocation == settings.AI_CREDITS_PREMIUM

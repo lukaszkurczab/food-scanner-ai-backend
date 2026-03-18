@@ -101,9 +101,14 @@ On startup, the backend configures CORS and attempts to initialize Firebase/Fire
 
 Every HTTP response includes the `X-Request-ID` header. Use it to correlate client-side failures, backend logs, and Sentry events for the same request.
 
+Foundation Sprint operator docs:
+- [Foundation V2 Rollout Playbook](../docs/foundation-v2-rollout-playbook.md)
+- [Telemetry Taxonomy](../docs/telemetry-taxonomy.md)
+- [Foundation QA Checklist](../docs/foundation-qa-checklist.md)
+
 ## Required Environment Variables
 
-Use [.env.example](/Users/lukaszkurczab/Desktop/Projects/Fitaly/food-scanner-ai-backend/.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
+Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
 
 | Variable                         | Required                          | Default                                      | Purpose                                                                    |
 | -------------------------------- | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |

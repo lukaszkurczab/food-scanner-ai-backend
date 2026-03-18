@@ -19,6 +19,17 @@ def test_log_gateway_decision_persists_gateway_entry(mocker: MockerFixture) -> N
             "reason": "OK",
             "score": 1.0,
             "credit_cost": 1.0,
+            "request_id": "req-1",
+            "action_type": "chat",
+            "task_type": "chat",
+            "hypothetical_decision": "LOCAL_ANSWER",
+            "hypothetical_reason": "TRIVIAL_GREETING",
+            "enforced": False,
+            "model": "gpt-4o-mini",
+            "estimated_tokens": 12,
+            "actual_tokens": None,
+            "latency_ms": 111.11,
+            "estimated_cost": 1.0,
         },
         "chat",
         language="pl",
@@ -45,3 +56,13 @@ def test_log_gateway_decision_persists_gateway_entry(mocker: MockerFixture) -> N
     assert payload["executionTimeMs"] == 234.57
     assert payload["profile"] == "free"
     assert payload["tier"] == "free"
+    assert payload["requestId"] == "req-1"
+    assert payload["taskType"] == "chat"
+    assert payload["hypotheticalDecision"] == "LOCAL_ANSWER"
+    assert payload["hypotheticalReason"] == "TRIVIAL_GREETING"
+    assert payload["enforced"] is False
+    assert payload["model"] == "gpt-4o-mini"
+    assert payload["estimatedTokens"] == 12
+    assert payload["actualTokens"] is None
+    assert payload["latencyMs"] == 111.11
+    assert payload["estimatedCost"] == 1.0

@@ -103,6 +103,61 @@ def test_post_ai_ask_deducts_chat_credit_and_returns_credit_fields(
     assert logged_kwargs["credit_cost"] == 1.0
 
 
+def test_post_ai_ask_logs_gateway_observability_metadata(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    log_gateway_decision = mocker.patch(
+        "app.api.routes.ai.ai_gateway_logger.log_gateway_decision"
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_context",
+        return_value=None,
+    )
+    mocker.patch(
+        "app.api.routes.ai.sanitization_service.sanitize_request",
+        return_value="sanitized prompt",
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_chat_prompt_service.build_chat_prompt",
+        return_value="chat prompt",
+    )
+    mocker.patch(
+        "app.api.routes.ai.ai_credits_service.deduct_credits",
+        return_value=_credits_status(
+            user_id="abc",
+            tier="free",
+            balance=99,
+            allocation=100,
+            period_start_at=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            period_end_at=datetime(2026, 4, 23, tzinfo=timezone.utc),
+        ),
+    )
+    mocker.patch(
+        "app.api.routes.ai.openai_service.ask_chat",
+        return_value="Weather is out of scope, but here is a dinner tip.",
+    )
+
+    response = client.post(
+        "/api/v1/ai/ask",
+        json={"message": "Jaka bedzie pogoda jutro?"},
+        headers=auth_headers("abc"),
+    )
+
+    assert response.status_code == 200
+    log_gateway_decision.assert_called_once()
+    gateway_result = log_gateway_decision.call_args.args[2]
+    assert gateway_result["decision"] == "FORWARD"
+    assert gateway_result["reason"] == "PASS_THROUGH"
+    assert gateway_result["task_type"] == "chat"
+    assert gateway_result["model"] == "gpt-4o-mini"
+    assert gateway_result["estimated_tokens"] > 0
+    assert gateway_result["estimated_cost"] == 1.0
+    assert gateway_result["hypothetical_decision"] == "REJECT"
+    assert gateway_result["hypothetical_reason"] == "LIKELY_OFF_TOPIC"
+    assert gateway_result["request_id"]
+
+
 def test_post_ai_ask_returns_402_with_fresh_snapshot_when_credits_exhausted(
     mocker: MockerFixture,
     auth_headers,
@@ -313,6 +368,7 @@ def test_post_ai_photo_analyze_deducts_five_credits(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     deduct_credits = mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
         return_value=_credits_status(
@@ -348,12 +404,15 @@ def test_post_ai_photo_analyze_deducts_five_credits(
     assert response.json()["balance"] == 95
     assert response.json()["costs"] == {"chat": 1, "textMeal": 1, "photo": 5}
     deduct_credits.assert_called_once_with("abc", cost=5, action="photo_analysis")
+    log_gateway_decision.assert_called_once()
+    assert log_gateway_decision.call_args.args[2]["task_type"] == "photo_meal_analysis"
 
 
 def test_post_ai_text_meal_analyze_deducts_one_credit(
     mocker: MockerFixture,
     auth_headers,
 ) -> None:
+    log_gateway_decision = mocker.patch("app.api.routes.ai.ai_gateway_logger.log_gateway_decision")
     deduct_credits = mocker.patch(
         "app.api.routes.ai.ai_credits_service.deduct_credits",
         return_value=_credits_status(
@@ -388,6 +447,8 @@ def test_post_ai_text_meal_analyze_deducts_one_credit(
     assert response.status_code == 200
     assert response.json()["balance"] == 799
     deduct_credits.assert_called_once_with("abc", cost=1, action="text_meal_analysis")
+    log_gateway_decision.assert_called_once()
+    assert log_gateway_decision.call_args.args[2]["task_type"] == "text_meal_analysis"
 
 
 def test_post_ai_photo_validation_reject_has_zero_deduction(

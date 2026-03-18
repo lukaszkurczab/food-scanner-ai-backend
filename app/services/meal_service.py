@@ -418,13 +418,15 @@ async def upload_photo(user_id: str, upload: UploadFile) -> MealPhotoPayload:
             extension = maybe_extension
 
     image_id = str(uuid4())
-    return await meal_storage.upload_photo_to_storage(
-        user_id,
-        upload,
-        object_path=f"meals/{user_id}/{image_id}.{extension}",
-        error_message="Failed to upload meal photo.",
+    return cast(
+        MealPhotoPayload,
+        await meal_storage.upload_photo_to_storage(
+            user_id,
+            upload,
+            object_path=f"meals/{user_id}/{image_id}.{extension}",
+            error_message="Failed to upload meal photo.",
+        ),
     )
-
 
 async def resolve_photo(
     user_id: str,

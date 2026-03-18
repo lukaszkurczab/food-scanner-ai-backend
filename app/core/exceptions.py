@@ -15,3 +15,23 @@ class ContentBlockedError(Exception):
 
 class FirestoreServiceError(Exception):
     """Raised when an error occurs while interacting with Firestore."""
+
+
+class TelemetryDisabledError(Exception):
+    """Raised when telemetry ingestion is disabled by configuration."""
+
+
+class TelemetryPayloadTooLargeError(Exception):
+    """Raised when a telemetry request exceeds configured payload limits."""
+
+
+class TelemetryRateLimitError(Exception):
+    """Raised when a telemetry client exceeds the allowed request rate."""
+
+
+class HabitsDisabledError(Exception):
+    """Raised when habit signal computation is disabled by configuration."""
+
+
+class StateDisabledError(Exception):
+    """Raised when nutrition state computation is disabled by configuration."""

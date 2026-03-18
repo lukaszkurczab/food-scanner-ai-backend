@@ -1,6 +1,6 @@
 """Service helpers for AI credits with rolling monthly periods."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 from typing import Literal
 
