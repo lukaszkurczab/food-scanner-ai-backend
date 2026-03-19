@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 MealType = Literal["breakfast", "lunch", "dinner", "snack", "other"]
 MealSource = Literal["ai", "manual", "saved"] | None
-MealSyncState = Literal["synced", "pending", "conflict"]
+MealSyncState = Literal["synced", "pending", "conflict", "failed"]
 MealInputMethod = Literal["manual", "photo", "barcode", "text", "saved", "quick_add"]
 
 

@@ -1,0 +1,43 @@
+{
+  "userUid": "user-contract-1",
+  "mealId": "meal-contract-1",
+  "timestamp": "2026-03-18T12:00:00.000Z",
+  "dayKey": "2026-03-18",
+  "type": "lunch",
+  "name": "Grilled chicken salad",
+  "ingredients": [
+    {
+      "id": "ing-1",
+      "name": "Chicken breast",
+      "amount": 200.0,
+      "unit": "g",
+      "kcal": 330.0,
+      "protein": 62.0,
+      "fat": 7.2,
+      "carbs": 0.0
+    }
+  ],
+  "createdAt": "2026-03-18T12:00:00.000Z",
+  "updatedAt": "2026-03-18T12:05:00.000Z",
+  "syncState": "synced",
+  "source": "ai",
+  "inputMethod": "photo",
+  "aiMeta": {
+    "model": "gpt-4o",
+    "runId": "run-abc",
+    "confidence": 0.88,
+    "warnings": ["partial_totals"]
+  },
+  "imageId": "img-001",
+  "photoUrl": "https://storage.example.com/photo.jpg",
+  "notes": "Post-workout meal",
+  "tags": ["high-protein", "lunch"],
+  "deleted": false,
+  "cloudId": "meal-contract-1",
+  "totals": {
+    "kcal": 330.0,
+    "protein": 62.0,
+    "fat": 7.2,
+    "carbs": 0.0
+  }
+}

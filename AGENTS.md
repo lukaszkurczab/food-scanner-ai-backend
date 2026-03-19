@@ -200,7 +200,31 @@ For each change-set, include:
 
 ## Frontend sync
 
-During tasks check if changes require otrher changes on frontend part (food-scanner-ai)
+During tasks check if changes require other changes on frontend part (food-scanner-ai).
+
+### Cross-repo contract checklist
+
+When a change touches any of the surfaces below, **both repos must be updated**:
+
+1. **Did this change alter a cross-repo contract?**
+   - Meal schema fields or enum values (`MealType`, `MealSyncState`, `MealInputMethod`, `MealSource`)
+   - NutritionState response shape (targets, consumed, remaining, quality, habits, streak, ai)
+   - AI gateway reject reasons (`REJECT_REASON_*` constants)
+   - Habit signal enums (`TopRisk`, `CoachPriority`)
+   - AI response shape (`BaseAiResponse` fields, credit costs)
+
+2. **Were paired contract fixtures updated?**
+   - Backend: `tests/contract_fixtures/*.json`
+   - Mobile: `src/__contract_fixtures__/*.json`
+   - These files must stay identical — copy after editing.
+
+3. **Were paired tests updated?**
+   - Backend: `tests/test_contract_alignment.py`
+   - Mobile: `src/__contract_fixtures__/contractAlignment.test.ts`
+
+4. **Verification:**
+   - Backend: `pytest tests/test_contract_alignment.py`
+   - Mobile: `npx jest contractAlignment`
 
 # Firebase
 

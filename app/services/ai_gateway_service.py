@@ -1,4 +1,14 @@
-"""Observability-first AI gateway helpers."""
+"""AI gateway — classifies, decides, and enforces request routing.
+
+The gateway sits between the API route and the upstream AI provider.  It
+evaluates every request, decides whether to FORWARD, REJECT, or answer
+locally, and logs the decision for observability.
+
+Canonical reject/forward reason codes are defined here as module-level
+constants so that backend, mobile, and tests all share a single source
+of truth.  Mobile's ``GATEWAY_REJECT_REASONS`` set must stay in sync
+with the ``REJECT_REASON_*`` constants below.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +21,20 @@ from app.core.config import settings
 Decision = Literal["FORWARD", "REJECT", "LOCAL_ANSWER"]
 TaskType = Literal["chat", "photo_meal_analysis", "text_meal_analysis", "other"]
 GatewayOutcome = Literal["FORWARDED", "BLOCKED", "UPSTREAM_ERROR"]
+
+# ---------------------------------------------------------------------------
+# Canonical reason codes — shared contract with mobile & tests
+# ---------------------------------------------------------------------------
+# Reject reasons (mobile: GATEWAY_REJECT_REASONS set in useChatHistory.ts)
+REJECT_REASON_OFF_TOPIC = "OFF_TOPIC"
+REJECT_REASON_TOO_SHORT = "TOO_SHORT"
+
+# Forward / pass-through reasons
+FORWARD_REASON_PASS_THROUGH = "PASS_THROUGH"
+FORWARD_REASON_GATEWAY_DISABLED = "GATEWAY_DISABLED"
+
+# Hypothetical-only reasons (not enforced, logged for analytics)
+HYPOTHESIS_TRIVIAL_GREETING = "TRIVIAL_GREETING"
 
 
 class GatewayResult(TypedDict):
@@ -124,7 +148,7 @@ def _classify_hypothetical_decision(message: str) -> tuple[Decision | None, str 
         return None, None
 
     if normalized in {"hej", "hello", "hi", "hey", "czesc", "cześć"}:
-        return "LOCAL_ANSWER", "TRIVIAL_GREETING"
+        return "LOCAL_ANSWER", HYPOTHESIS_TRIVIAL_GREETING
 
     off_topic_keywords = (
         "pogoda",
@@ -137,7 +161,7 @@ def _classify_hypothetical_decision(message: str) -> tuple[Decision | None, str 
         "horoskop",
     )
     if any(keyword in normalized for keyword in off_topic_keywords):
-        return "REJECT", "LIKELY_OFF_TOPIC"
+        return "REJECT", REJECT_REASON_OFF_TOPIC
 
     return None, None
 
@@ -158,7 +182,7 @@ def evaluate_request(
             action_type=action_type,
             message=message,
             decision="FORWARD",
-            reason="GATEWAY_DISABLED",
+            reason=FORWARD_REASON_GATEWAY_DISABLED,
             request_id=request_id,
         )
 
@@ -168,7 +192,7 @@ def evaluate_request(
             action_type=action_type,
             message=message,
             decision="REJECT",
-            reason=hypothetical_reason or "LIKELY_OFF_TOPIC",
+            reason=hypothetical_reason or REJECT_REASON_OFF_TOPIC,
             request_id=request_id,
             hypothetical_decision=hypothetical_decision,
             hypothetical_reason=hypothetical_reason,
@@ -179,7 +203,7 @@ def evaluate_request(
         action_type=action_type,
         message=message,
         decision="FORWARD",
-        reason="PASS_THROUGH",
+        reason=FORWARD_REASON_PASS_THROUGH,
         request_id=request_id,
         hypothetical_decision=hypothetical_decision,
         hypothetical_reason=hypothetical_reason,

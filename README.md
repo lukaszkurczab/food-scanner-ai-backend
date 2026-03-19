@@ -69,66 +69,91 @@ Run type checking:
 ./.venv/bin/pyright
 ```
 
-## Backend setup (Foundation stage)
+## Foundation services overview
 
-Install backend dependencies from the repository root:
+The backend exposes two API versions:
 
-```bash
-pip install -r requirements.txt
-```
-
-Set the foundation-stage environment variables before starting the API:
-
-- `FIREBASE_PROJECT_ID` - Google Cloud project ID used by Firebase Admin and Firestore.
-- `GOOGLE_APPLICATION_CREDENTIALS` - absolute path to the Firebase service account JSON key used during backend startup.
-- `CORS_ORIGINS` - comma-separated list of allowed client origins. For local development you can use `CORS_ORIGINS=*`, but production should always list concrete domains.
-- `OPENAI_API_KEY` - required for backend-managed AI endpoints such as `/api/v1/ai/ask` and `/api/v1/ai/photo/analyze`.
-- `AI_DAILY_LIMIT_FREE` - daily AI request limit for free users, used by `/api/v1/ai/usage` and `/api/v1/ai/ask`.
-
-Run the application locally:
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-On startup, the backend configures CORS and attempts to initialize Firebase/Firestore. The API currently exposes:
+**v1 (stable)** — original endpoints, no feature flags:
 
 - `GET /api/v1/health`
 - `GET /api/v1/version`
-- `GET /api/v1/ai/usage?userId=<id>`
-- `POST /api/v1/ai/ask`
-- `POST /api/v1/logs/error`
+- `POST /api/v1/ai/ask` — AI chat (gateway-enforced)
+- `POST /api/v1/ai/photo/analyze` — photo meal analysis
+- `POST /api/v1/ai/text-meal/analyze` — text meal analysis
+- `GET /api/v1/ai/credits` — credit balance
+- `POST /api/v1/users/me/meals` — meal upsert
+- `POST /api/v1/users/me/meals/{id}/delete` — meal delete
+- `GET /api/v1/users/me/meals/history` — meal history (paginated)
+- `GET /api/v1/users/me/meals/changes` — meal sync (paginated)
+- `POST /api/v1/logs/error` — client error forwarding
 
-Every HTTP response includes the `X-Request-ID` header. Use it to correlate client-side failures, backend logs, and Sentry events for the same request.
+**v2 (Foundation Sprint)** — behind feature flags:
 
-Foundation Sprint operator docs:
-- [Foundation V2 Rollout Playbook](../docs/foundation-v2-rollout-playbook.md)
-- [Telemetry Taxonomy](../docs/telemetry-taxonomy.md)
-- [Foundation QA Checklist](../docs/foundation-qa-checklist.md)
+- `POST /api/v2/telemetry/events/batch` — telemetry ingest (requires `TELEMETRY_ENABLED=true`)
+- `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state (requires `STATE_ENABLED=true`)
+- `GET /api/v2/users/me/habits` — habit signals (requires `HABITS_ENABLED=true`)
+
+## Feature flags
+
+| Flag | Default | What it controls |
+|------|---------|-----------------|
+| `TELEMETRY_ENABLED` | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. |
+| `STATE_ENABLED` | `false` | Serve v2 nutrition state. Also requires mobile `EXPO_PUBLIC_ENABLE_V2_STATE=true`. |
+| `HABITS_ENABLED` | `false` | Compute habit signals (consumed inside state endpoint and standalone). |
+| `AI_GATEWAY_ENABLED` | `true` | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass. |
+| `AI_GATEWAY_ML_ENABLED` | `false` | ML classifier for gateway. Do not enable without a trained model. |
+
+To enable a foundation surface for QA/internal, set the backend flag in `.env` or Railway, restart, then enable the paired mobile flag and rebuild the app.  See [Foundation Rollout Runbook](../docs/runbooks/foundation-rollout-runbook.md) for step-by-step.
+
+## Backend setup
+
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Health check: `GET http://127.0.0.1:8000/api/v1/health`
+
+Every HTTP response includes `X-Request-ID`.  Use it to correlate client failures, backend logs, and Sentry events.
+
+## Operator docs
+
+- [Foundation Contracts](../docs/contracts/foundation-contracts.md) — canonical shapes for all cross-repo contracts
+- [Foundation Rollout Runbook](../docs/runbooks/foundation-rollout-runbook.md) — enable/disable/rollback steps
+- [Foundation Observability](../docs/monitoring/foundation-observability.md) — what to monitor, suggested alerts
+- [Foundation Hardening Plan](../docs/foundation/foundation-hardening-plan.md) — completed PRs, remaining gaps, exit criteria
+- [Telemetry Taxonomy](../docs/telemetry-taxonomy.md) — event names, property rules, payload limits
+- [Foundation QA Checklist](../docs/foundation-qa-checklist.md) — automated + manual QA coverage
+- [Foundation V2 Rollout Playbook](../docs/foundation-v2-rollout-playbook.md) — original rollout strategy
 
 ## Required Environment Variables
 
 Use [.env.example](./.env.example) as the source of truth for local and deployment configuration. Core app variables are optional because the backend has defaults, but integration variables become required as soon as Firebase, Firestore, OpenAI, or Sentry are enabled.
 
-| Variable                         | Required                          | Default                                      | Purpose                                                                    |
-| -------------------------------- | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| `APP_NAME`                       | No                                | `Fitaly Food Scanner API`                    | API title in docs/metadata                                                 |
-| `DESCRIPTION`                    | No                                | `Backend API for Fitaly mobile application.` | API description exposed in docs                                            |
-| `VERSION`                        | No                                | `0.1.0`                                      | API version exposed by app                                                 |
-| `DEBUG`                          | No                                | `false`                                      | FastAPI debug mode                                                         |
-| `API_V1_PREFIX`                  | No                                | `/api/v1`                                    | Global API route prefix                                                    |
-| `ENVIRONMENT`                    | No                                | `local`                                      | Runtime environment name (`local`, `development`, `staging`, `production`) |
-| `API_V2_PREFIX`                  | No                                | `/api/v2`                                    | Next API version route prefix                                              |
-| `OPENAI_API_KEY`                 | Yes (AI features)                 | -                                            | Auth for OpenAI API calls                                                  |
-| `CORS_ORIGINS`                   | No                                | `*` fallback if empty                        | Comma-separated frontend origins allowed by CORS                           |
-| `FIREBASE_PROJECT_ID`            | Yes (Firebase/Firestore features) | -                                            | Firebase project selection                                                 |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Optional fallback                 | -                                            | Absolute path to the Firebase service account JSON file                    |
-| `FIREBASE_CLIENT_EMAIL`          | Yes (Firebase/Firestore features) | -                                            | Service account client email; preferred on Railway                         |
-| `FIREBASE_PRIVATE_KEY`           | Yes (Firebase/Firestore features) | -                                            | Service account private key; preferred on Railway                          |
-| `SENTRY_DSN`                     | No                                | empty                                        | Sentry project DSN; empty disables Sentry                                  |
-| `SENTRY_ENVIRONMENT`             | No                                | `development`                                | Sentry environment tag                                                     |
-| `AI_DAILY_LIMIT_FREE`            | No                                | `20`                                         | Daily AI quota for free users                                              |
-| `PORT`                           | Railway only                      | set by Railway                               | Runtime HTTP port                                                          |
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `APP_NAME` | No | `Fitaly Food Scanner API` | API title in docs/metadata |
+| `VERSION` | No | `0.1.0` | API version exposed by app |
+| `DEBUG` | No | `false` | FastAPI debug mode |
+| `ENVIRONMENT` | No | `local` | `local`, `development`, `staging`, `production` |
+| `OPENAI_API_KEY` | Yes (AI features) | - | Auth for OpenAI API calls |
+| `CORS_ORIGINS` | No | `*` fallback | Comma-separated frontend origins |
+| `FIREBASE_PROJECT_ID` | Yes (Firestore) | - | Firebase project selection |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Optional | - | Path to Firebase service account JSON |
+| `FIREBASE_CLIENT_EMAIL` | Yes (Firestore) | - | Service account email; preferred on Railway |
+| `FIREBASE_PRIVATE_KEY` | Yes (Firestore) | - | Service account private key; preferred on Railway |
+| `SENTRY_DSN` | No | empty | Sentry DSN; empty disables Sentry |
+| `SENTRY_ENVIRONMENT` | No | `development` | Sentry environment tag |
+| `AI_CREDITS_FREE` | No | `100` | Monthly AI credit allocation for free users |
+| `AI_CREDITS_PREMIUM` | No | `800` | Monthly AI credit allocation for premium users |
+| `AI_CREDIT_COST_CHAT` | No | `1` | Credits per chat request |
+| `AI_CREDIT_COST_PHOTO` | No | `5` | Credits per photo analysis |
+| `AI_CREDIT_COST_TEXT_MEAL` | No | `1` | Credits per text meal analysis |
+| `AI_GATEWAY_ENABLED` | No | `true` | Enforce AI gateway rules |
+| `TELEMETRY_ENABLED` | No | `false` | Accept v2 telemetry batches |
+| `HABITS_ENABLED` | No | `false` | Compute habit signals |
+| `STATE_ENABLED` | No | `false` | Serve v2 nutrition state |
+| `PORT` | Railway only | set by Railway | Runtime HTTP port |
 
 Example local `.env`:
 

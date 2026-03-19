@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from google.api_core.exceptions import AlreadyExists
+from google.cloud.firestore_v1.base_document import BaseDocumentReference
 from pytest_mock import MockerFixture
 
 from app.api.v2.router import router as v2_router
 from app.services import telemetry_service
+
+
+# ---------------------------------------------------------------------------
+# Fake Firestore layer
+# ---------------------------------------------------------------------------
 
 
 class FakeDocumentRef:
@@ -38,6 +45,30 @@ class FakeFirestoreClient:
     def collection(self, name: str) -> FakeCollectionRef:
         self.requested_collections.append(name)
         return FakeCollectionRef(self.storage)
+
+
+class FailingDocumentRef:
+    """Simulates a Firestore write failure."""
+
+    def create(self, data: dict[str, object]) -> None:
+        from firebase_admin.exceptions import FirebaseError
+
+        raise FirebaseError(code=500, message="simulated write failure")
+
+
+class FailingCollectionRef:
+    def document(self, document_id: str) -> FailingDocumentRef:
+        return FailingDocumentRef()
+
+
+class FailingFirestoreClient:
+    def collection(self, name: str) -> FailingCollectionRef:
+        return FailingCollectionRef()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def create_test_client() -> TestClient:
@@ -70,6 +101,11 @@ def setup_telemetry_enabled(mocker: MockerFixture, enabled: bool = True) -> None
 
 def reset_telemetry_state() -> None:
     telemetry_service.reset_rate_limit_state()
+
+
+# ---------------------------------------------------------------------------
+# Happy path
+# ---------------------------------------------------------------------------
 
 
 def test_telemetry_batch_accepts_valid_payload(
@@ -110,6 +146,11 @@ def test_telemetry_batch_accepts_valid_payload(
     assert isinstance(stored_event["ingestedAt"], str)
 
 
+# ---------------------------------------------------------------------------
+# Validation / rejection
+# ---------------------------------------------------------------------------
+
+
 def test_telemetry_batch_drops_disallowed_event_names(mocker: MockerFixture) -> None:
     reset_telemetry_state()
     setup_telemetry_enabled(mocker, enabled=True)
@@ -138,6 +179,11 @@ def test_telemetry_batch_drops_disallowed_event_names(mocker: MockerFixture) -> 
     assert firestore_client.storage == {}
 
 
+# ---------------------------------------------------------------------------
+# Idempotency
+# ---------------------------------------------------------------------------
+
+
 def test_telemetry_batch_is_idempotent_for_duplicate_event_ids(
     mocker: MockerFixture,
 ) -> None:
@@ -160,6 +206,11 @@ def test_telemetry_batch_is_idempotent_for_duplicate_event_ids(
         "rejectedEvents": [],
     }
     assert list(firestore_client.storage) == ["evt-1"]
+
+
+# ---------------------------------------------------------------------------
+# Payload limits
+# ---------------------------------------------------------------------------
 
 
 def test_telemetry_batch_rejects_payload_or_batch_that_is_too_large(
@@ -231,6 +282,11 @@ def test_telemetry_batch_returns_413_when_serialized_batch_payload_is_too_large(
     assert firestore_client.storage == {}
 
 
+# ---------------------------------------------------------------------------
+# Feature flag: disabled
+# ---------------------------------------------------------------------------
+
+
 def test_telemetry_batch_returns_503_when_feature_flag_is_disabled(
     mocker: MockerFixture,
 ) -> None:
@@ -244,6 +300,11 @@ def test_telemetry_batch_returns_503_when_feature_flag_is_disabled(
     assert response.status_code == 503
     assert response.json() == {"detail": "Telemetry ingestion is disabled"}
     get_firestore.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
 
 
 def test_telemetry_batch_returns_429_when_rate_limit_is_exceeded(
@@ -263,3 +324,184 @@ def test_telemetry_batch_returns_429_when_rate_limit_is_exceeded(
 
     assert response.status_code == 429
     assert response.json() == {"detail": "Too many telemetry requests"}
+
+
+# ---------------------------------------------------------------------------
+# Observability logging — success path
+# ---------------------------------------------------------------------------
+
+
+def test_successful_ingest_logs_batch_summary(
+    mocker: MockerFixture,
+    auth_headers,
+    caplog,
+) -> None:
+    """telemetry.ingest.ok is logged with counters on every successful batch."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    with caplog.at_level(logging.INFO, logger="app.services.telemetry_service"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload(),
+            headers=auth_headers("user-obs-1"),
+        )
+
+    assert response.status_code == 202
+    assert any("telemetry.ingest.ok" in record.message for record in caplog.records)
+    summary_record = next(r for r in caplog.records if "telemetry.ingest.ok" in r.message)
+    assert summary_record.accepted == 1  # type: ignore[attr-defined]
+    assert summary_record.duplicates == 0  # type: ignore[attr-defined]
+    assert summary_record.rejected == 0  # type: ignore[attr-defined]
+    assert summary_record.session_id == "sess-1"  # type: ignore[attr-defined]
+    assert summary_record.user_id == "user-obs-1"  # type: ignore[attr-defined]
+    assert summary_record.platform == "ios"  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Observability logging — rejected event path
+# ---------------------------------------------------------------------------
+
+
+def test_rejected_event_logs_warning_per_event(
+    mocker: MockerFixture,
+    caplog,
+) -> None:
+    """Each disallowed event emits a telemetry.ingest.rejected warning."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    with caplog.at_level(logging.WARNING, logger="app.services.telemetry_service"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload({"name": "bad_event"}),
+        )
+
+    assert response.status_code == 202
+    rejected_records = [r for r in caplog.records if "telemetry.ingest.rejected" in r.message]
+    assert len(rejected_records) == 1
+    assert rejected_records[0].event_name == "bad_event"  # type: ignore[attr-defined]
+    assert rejected_records[0].reason == "event_not_allowed"  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Observability logging — rate limit path
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limit_hit_logs_warning(
+    mocker: MockerFixture,
+    caplog,
+) -> None:
+    """Rate limit exceeded emits telemetry.ingest.rate_limited warning."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    mocker.patch.object(telemetry_service, "RATE_LIMIT_MAX_REQUESTS", 1)
+    client = create_test_client()
+
+    # First request succeeds
+    client.post("/api/v2/telemetry/events/batch", json=build_payload())
+
+    # Second triggers rate limit
+    with caplog.at_level(logging.WARNING, logger="app.services.telemetry_service"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload({"eventId": "evt-2"}),
+        )
+
+    assert response.status_code == 429
+    rate_records = [r for r in caplog.records if "telemetry.ingest.rate_limited" in r.message]
+    assert len(rate_records) == 1
+    assert hasattr(rate_records[0], "bucket_key")
+
+
+# ---------------------------------------------------------------------------
+# Observability logging — Firestore failure path
+# ---------------------------------------------------------------------------
+
+
+def test_firestore_failure_logs_error_and_returns_500(
+    mocker: MockerFixture,
+    caplog,
+) -> None:
+    """Firestore write failure emits error log and returns 500."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    mocker.patch(
+        "app.services.telemetry_service.get_firestore",
+        return_value=FailingFirestoreClient(),
+    )
+    client = create_test_client()
+
+    with caplog.at_level(logging.ERROR, logger="app.services.telemetry_service"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=build_payload(),
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Failed to ingest telemetry batch"}
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(error_records) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Mixed batch — accepted + rejected in one batch
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_batch_logs_both_accepted_and_rejected(
+    mocker: MockerFixture,
+    auth_headers,
+    caplog,
+) -> None:
+    """A batch with valid and invalid events logs both rejection warnings
+    and a summary with correct counters."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = {
+        "sessionId": "sess-mix",
+        "app": {"platform": "android", "appVersion": "2.0.0"},
+        "device": {},
+        "events": [
+            {"eventId": "ok-1", "name": "meal_added", "ts": "2026-03-18T12:00:00Z"},
+            {"eventId": "bad-1", "name": "unknown_event", "ts": "2026-03-18T12:01:00Z"},
+            {"eventId": "ok-2", "name": "screen_view", "ts": "2026-03-18T12:02:00Z"},
+        ],
+    }
+
+    with caplog.at_level(logging.INFO, logger="app.services.telemetry_service"):
+        response = client.post(
+            "/api/v2/telemetry/events/batch",
+            json=payload,
+            headers=auth_headers("user-mix"),
+        )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["acceptedCount"] == 2
+    assert body["rejectedCount"] == 1
+    assert body["duplicateCount"] == 0
+
+    # Verify rejection warning was emitted
+    rejected_records = [r for r in caplog.records if "telemetry.ingest.rejected" in r.message]
+    assert len(rejected_records) == 1
+
+    # Verify summary was emitted with correct counters
+    summary_records = [r for r in caplog.records if "telemetry.ingest.ok" in r.message]
+    assert len(summary_records) == 1
+    assert summary_records[0].accepted == 2  # type: ignore[attr-defined]
+    assert summary_records[0].rejected == 1  # type: ignore[attr-defined]
+    assert summary_records[0].events_total == 3  # type: ignore[attr-defined]

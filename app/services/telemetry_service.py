@@ -1,4 +1,18 @@
-"""Telemetry ingestion service for v2 batch uploads."""
+"""Telemetry ingestion service for v2 batch uploads.
+
+Operator visibility
+-------------------
+Every ingest call emits structured log lines so that operators can
+monitor telemetry health without a dedicated dashboard:
+
+* **INFO  telemetry.ingest.ok**   — batch accepted (counters)
+* **WARNING telemetry.ingest.rejected** — one or more events had a
+  disallowed name (per-event detail)
+* **WARNING telemetry.ingest.rate_limited** — caller exceeded the
+  sliding-window rate limit
+* **ERROR telemetry.ingest.firestore_error** — Firestore write failed
+  (existing behaviour, kept for continuity)
+"""
 
 from __future__ import annotations
 
@@ -68,6 +82,10 @@ def _check_rate_limit(bucket_key: str) -> None:
         bucket.popleft()
 
     if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+        logger.warning(
+            "telemetry.ingest.rate_limited",
+            extra={"bucket_key": bucket_key, "window_size": len(bucket)},
+        )
         raise TelemetryRateLimitError("Too many telemetry requests")
 
     bucket.append(now)
@@ -130,6 +148,16 @@ def ingest_batch(
                     reason="event_not_allowed",
                 )
             )
+            logger.warning(
+                "telemetry.ingest.rejected",
+                extra={
+                    "event_id": event.eventId,
+                    "event_name": event.name,
+                    "reason": "event_not_allowed",
+                    "session_id": request.sessionId,
+                    "user_id": context.user_id,
+                },
+            )
             continue
 
         try:
@@ -148,9 +176,24 @@ def ingest_batch(
             )
             raise FirestoreServiceError("Failed to persist telemetry event.") from exc
 
+    rejected_count = len(rejected_events)
+    logger.info(
+        "telemetry.ingest.ok",
+        extra={
+            "session_id": request.sessionId,
+            "user_id": context.user_id,
+            "platform": request.app.platform,
+            "app_version": request.app.appVersion,
+            "events_total": len(request.events),
+            "accepted": accepted_count,
+            "duplicates": duplicate_count,
+            "rejected": rejected_count,
+        },
+    )
+
     return TelemetryBatchIngestResponse(
         acceptedCount=accepted_count,
         duplicateCount=duplicate_count,
-        rejectedCount=len(rejected_events),
+        rejectedCount=rejected_count,
         rejectedEvents=rejected_events,
     )

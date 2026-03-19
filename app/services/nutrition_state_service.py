@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 import logging
 from typing import Any
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.core.coercion import round_metric
 from app.core.config import settings
@@ -28,14 +29,21 @@ from app.schemas.nutrition_state import (
 )
 from app.services import ai_credits_service
 from app.services.habit_signal_service import (
+    CONSISTENCY_WINDOW_DAYS,
+    READ_WINDOW_BUFFER_DAYS,
     _derive_day_key,
     _extract_totals,
     _is_unknown_meal_details,
     compute_habit_signals,
 )
-from app.services.streak_service import _build_streak_state_from_meals, _parse_target_kcal
+from app.services.streak_service import get_streak
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _serialize_datetime(value: datetime) -> str:
@@ -62,6 +70,70 @@ def _coerce_target(value: object) -> float | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Bounded meal reading — replaces the previous unbounded .stream()
+# ---------------------------------------------------------------------------
+
+def _serialize_day_start(day_value: date) -> str:
+    return datetime.combine(day_value, time.min, tzinfo=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _load_bounded_meals(
+    user_ref: firestore.DocumentReference,
+    *,
+    reference_day_key: str,
+    window_days: int = CONSISTENCY_WINDOW_DAYS,
+    buffer_days: int = READ_WINDOW_BUFFER_DAYS,
+) -> list[dict[str, Any]]:
+    """Load meals within a bounded time window using dual-query strategy.
+
+    Uses the same approach as habit_signal_service._load_recent_meals:
+    1. Query by canonical dayKey range (primary source of truth)
+    2. Query by timestamp range (fallback for legacy records without dayKey)
+    3. Deduplicate by document ID
+
+    The window is centered on ``reference_day_key`` going back ``window_days``,
+    with a small buffer on both sides to handle timezone edge cases.
+    """
+    reference_date = datetime.strptime(reference_day_key, "%Y-%m-%d").date()
+    start_day = reference_date - timedelta(days=window_days - 1)
+    buffered_start = start_day - timedelta(days=buffer_days)
+    buffered_end = reference_date + timedelta(days=buffer_days)
+
+    start_day_key = buffered_start.isoformat()
+    end_day_key = buffered_end.isoformat()
+    start_ts = _serialize_day_start(buffered_start)
+    end_ts = _serialize_day_start(buffered_end + timedelta(days=1))
+
+    meals_collection = user_ref.collection(MEALS_SUBCOLLECTION)
+    snapshots_by_id: dict[str, dict[str, Any]] = {}
+
+    # Primary: read by canonical dayKey
+    day_key_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("dayKey", ">=", start_day_key))
+        .where(filter=FieldFilter("dayKey", "<=", end_day_key))
+    )
+    for snapshot in day_key_query.stream():
+        snapshots_by_id[snapshot.id] = dict(snapshot.to_dict() or {})
+
+    # Fallback: read by timestamp for legacy records without valid dayKey
+    timestamp_query = (
+        meals_collection.where(filter=FieldFilter("deleted", "==", False))
+        .where(filter=FieldFilter("timestamp", ">=", start_ts))
+        .where(filter=FieldFilter("timestamp", "<", end_ts))
+    )
+    for snapshot in timestamp_query.stream():
+        snapshots_by_id.setdefault(snapshot.id, dict(snapshot.to_dict() or {}))
+
+    return list(snapshots_by_id.values())
+
+
+# ---------------------------------------------------------------------------
+# Macro targets
+# ---------------------------------------------------------------------------
+
+
 def _extract_macro_targets(profile: dict[str, Any] | None) -> dict[str, float | None]:
     profile_map = profile if isinstance(profile, dict) else {}
     macro_targets = profile_map.get("macroTargets")
@@ -80,6 +152,11 @@ def _extract_macro_targets(profile: dict[str, Any] | None) -> dict[str, float | 
         "fat": _coerce_target(macro_map.get("fatGrams"))
         or _coerce_target(macro_map.get("fat")),
     }
+
+
+# ---------------------------------------------------------------------------
+# Consumed / remaining / quality
+# ---------------------------------------------------------------------------
 
 
 def _sum_consumed(meals: list[dict[str, Any]]) -> NutritionConsumed:
@@ -117,6 +194,9 @@ def _build_remaining(
     targets: NutritionTargets,
     consumed: NutritionConsumed,
 ) -> NutritionRemaining:
+    # Overshoot is clamped to zero — the UI shows 0 kcal remaining rather than
+    # negative values.  If the product later wants to surface overshoot, this
+    # clamp should be removed and the mobile consumer updated accordingly.
     return NutritionRemaining(
         kcal=max(round_metric(targets.kcal - consumed.kcal, 2), 0) if targets.kcal is not None else None,
         protein=max(round_metric(targets.protein - consumed.protein, 2), 0)
@@ -144,12 +224,24 @@ def _build_quality(meals: list[dict[str, Any]]) -> NutritionQuality:
     )
 
 
+# ---------------------------------------------------------------------------
+# Meal filtering
+# ---------------------------------------------------------------------------
+
+
 def _filter_core_meals(meals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Safety net — bounded queries already filter deleted == False at Firestore
+    level, but in-memory filter guards against any edge-case leak."""
     return [meal for meal in meals if not bool(meal.get("deleted"))]
 
 
 def _filter_meals_for_day(meals: list[dict[str, Any]], *, day_key: str) -> list[dict[str, Any]]:
     return [meal for meal in meals if _derive_day_key(meal) == day_key]
+
+
+# ---------------------------------------------------------------------------
+# Sub-summaries: habits, streak, AI
+# ---------------------------------------------------------------------------
 
 
 def build_habits_summary(
@@ -180,40 +272,15 @@ def build_habits_summary(
     )
 
 
-def _build_daily_kcal_by_day(
-    meals: list[dict[str, Any]],
-    *,
-    reference_day_key: str,
-) -> dict[str, float]:
-    daily_kcal: dict[str, float] = {}
-    reference_day = datetime.strptime(reference_day_key, "%Y-%m-%d").date()
+async def build_streak_summary(user_id: str) -> NutritionStreakSummary:
+    """Read the authoritative streak document instead of recomputing from meals.
 
-    for meal in meals:
-        day_key = _derive_day_key(meal)
-        if day_key is None:
-            continue
-        parsed_day = datetime.strptime(day_key, "%Y-%m-%d").date()
-        if parsed_day > reference_day:
-            continue
-        meal_kcal, _meal_protein = _extract_totals(meal)
-        daily_kcal[day_key] = daily_kcal.get(day_key, 0.0) + meal_kcal
-
-    return daily_kcal
-
-
-def build_streak_summary(
-    *,
-    profile: dict[str, Any] | None,
-    meals: list[dict[str, Any]],
-    reference_day_key: str,
-) -> NutritionStreakSummary:
-    target_kcal = _parse_target_kcal(profile or {})
-    streak = _build_streak_state_from_meals(
-        daily_kcal=_build_daily_kcal_by_day(meals, reference_day_key=reference_day_key),
-        target_kcal=target_kcal,
-        threshold_pct=0.8,
-        reference_day_key=reference_day_key,
-    )
+    The streak document is kept in sync by streak_service.sync_streak_from_meals()
+    which is called on every meal upsert/delete.  Reading the document directly
+    avoids an unbounded history scan and is always consistent with the last
+    write.
+    """
+    streak = await get_streak(user_id)
     current_raw = streak.get("current")
     last_date_raw = streak.get("lastDate")
     return NutritionStreakSummary(
@@ -249,6 +316,11 @@ def _default_ai_summary() -> NutritionAiSummary:
     return NutritionAiSummary()
 
 
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
 async def get_nutrition_state(
     user_id: str,
     *,
@@ -267,10 +339,15 @@ async def get_nutrition_state(
     try:
         user_snapshot = user_ref.get()
         profile = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else None
-        all_meals = [
-            dict(snapshot.to_dict() or {})
-            for snapshot in user_ref.collection(MEALS_SUBCOLLECTION).stream()
-        ]
+
+        # Bounded read: load only meals within the habit window (28 + 1 buffer
+        # days), centered on the requested day — NOT the full meal history.
+        # This covers both the requested day's consumed/quality data and the
+        # 28-day lookback for habit signals.
+        bounded_meals = _load_bounded_meals(
+            user_ref,
+            reference_day_key=resolved_day_key,
+        )
     except (FirebaseError, GoogleAPICallError, RetryError) as exc:
         logger.exception(
             "Failed to build nutrition state.",
@@ -278,7 +355,9 @@ async def get_nutrition_state(
         )
         raise FirestoreServiceError("Failed to build nutrition state.") from exc
 
-    meals = _filter_core_meals(all_meals)
+    # Safety net: bounded queries already filter deleted == False at Firestore
+    # level, but _filter_core_meals guards against edge-case leaks.
+    meals = _filter_core_meals(bounded_meals)
     requested_day_meals = _filter_meals_for_day(meals, day_key=resolved_day_key)
     targets_map = _extract_macro_targets(profile)
     targets = NutritionTargets(**targets_map)
@@ -299,12 +378,10 @@ async def get_nutrition_state(
         )
         habits = _default_habits_summary()
 
+    # Streak: read the authoritative streak document directly instead of
+    # recomputing from unbounded meal history.
     try:
-        streak = build_streak_summary(
-            profile=profile,
-            meals=meals,
-            reference_day_key=resolved_day_key,
-        )
+        streak = await build_streak_summary(user_id)
     except Exception:
         logger.exception(
             "Failed to include streak summary in nutrition state.",

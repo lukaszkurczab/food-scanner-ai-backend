@@ -1,0 +1,9 @@
+{
+  "_doc": "HTTP 400 response body when the AI gateway rejects a request.",
+  "detail": {
+    "message": "AI request blocked by gateway",
+    "code": "AI_GATEWAY_BLOCKED",
+    "reason": "OFF_TOPIC",
+    "score": 1.0
+  }
+}

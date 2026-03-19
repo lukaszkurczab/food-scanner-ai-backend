@@ -197,7 +197,7 @@ def test_post_ai_ask_rejects_real_off_topic_chat(
         "detail": {
             "message": "AI request blocked by gateway",
             "code": "AI_GATEWAY_BLOCKED",
-            "reason": "LIKELY_OFF_TOPIC",
+            "reason": "OFF_TOPIC",
             "score": 1.0,
         }
     }
@@ -207,7 +207,7 @@ def test_post_ai_ask_rejects_real_off_topic_chat(
     log_gateway_decision.assert_called_once()
     gateway_result = log_gateway_decision.call_args.args[2]
     assert gateway_result["decision"] == "REJECT"
-    assert gateway_result["reason"] == "LIKELY_OFF_TOPIC"
+    assert gateway_result["reason"] == "OFF_TOPIC"
     assert gateway_result["outcome"] == "BLOCKED"
     assert gateway_result["enforced"] is True
 

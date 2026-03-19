@@ -1,0 +1,75 @@
+{
+  "computedAt": "2026-03-18T12:00:00Z",
+  "dayKey": "2026-03-18",
+  "targets": {
+    "kcal": 2200.0,
+    "protein": 150.0,
+    "carbs": 250.0,
+    "fat": 70.0
+  },
+  "consumed": {
+    "kcal": 1450.0,
+    "protein": 98.0,
+    "carbs": 160.0,
+    "fat": 42.0
+  },
+  "remaining": {
+    "kcal": 750.0,
+    "protein": 52.0,
+    "carbs": 90.0,
+    "fat": 28.0
+  },
+  "quality": {
+    "mealsLogged": 3,
+    "missingNutritionMeals": 0,
+    "dataCompletenessScore": 1.0
+  },
+  "habits": {
+    "available": true,
+    "behavior": {
+      "loggingDays7": 5,
+      "loggingConsistency28": 0.75,
+      "avgMealsPerLoggedDay14": 2.8,
+      "mealTypeCoverage14": {
+        "breakfast": true,
+        "lunch": true,
+        "dinner": true,
+        "snack": false,
+        "other": false,
+        "coveredCount": 3
+      },
+      "kcalAdherence14": 0.92,
+      "kcalUnderTargetRatio14": 0.15,
+      "proteinDaysHit14": {
+        "hitDays": 8,
+        "eligibleDays": 12,
+        "unknownDays": 2,
+        "ratio": 0.67
+      }
+    },
+    "dataQuality": {
+      "daysWithUnknownMealDetails14": 1
+    },
+    "topRisk": "none",
+    "coachPriority": "maintain"
+  },
+  "streak": {
+    "available": true,
+    "current": 5,
+    "lastDate": "2026-03-18"
+  },
+  "ai": {
+    "available": true,
+    "tier": "free",
+    "balance": 85,
+    "allocation": 100,
+    "usedThisPeriod": 15,
+    "periodStartAt": "2026-03-01T00:00:00Z",
+    "periodEndAt": "2026-03-31T23:59:59Z",
+    "costs": {
+      "chat": 1,
+      "textMeal": 1,
+      "photo": 5
+    }
+  }
+}
