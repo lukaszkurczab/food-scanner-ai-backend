@@ -93,6 +93,19 @@ The backend exposes two API versions:
 - `GET /api/v2/users/me/state?day=YYYY-MM-DD` — nutrition state (requires `STATE_ENABLED=true`)
 - `GET /api/v2/users/me/habits` — habit signals (requires `HABITS_ENABLED=true`)
 
+**v2 follow-up technical surface**:
+
+- `GET /api/v2/users/me/coach?day=YYYY-MM-DD` — Coach Insights technical surface built on top of nutrition state + habit signals. No separate coach feature flag is planned.
+
+**Coach Insights telemetry allowlist**:
+
+- `coach_card_viewed` — `insightType`, `actionType`, `isPositive`
+- `coach_card_expanded` — `insightType`
+- `coach_card_cta_clicked` — `insightType`, `actionType`, `targetScreen`
+- `coach_empty_state_viewed` — `emptyReason`
+
+Coach insight telemetry stays intentionally narrow. Do not send card `title`, `body`, reason text, or any user-authored content in telemetry props.
+
 ## Feature flags
 
 | Flag | Default | What it controls |

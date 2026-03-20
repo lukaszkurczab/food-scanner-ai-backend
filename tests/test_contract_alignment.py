@@ -17,6 +17,13 @@ from typing import Any, get_args
 
 import pytest
 
+from app.schemas.coach import (
+    CoachActionType,
+    CoachEmptyReason,
+    CoachInsightType,
+    CoachResponse,
+    CoachSource,
+)
 from app.schemas.habits import CoachPriority, TopRisk
 from app.schemas.meal import (
     MealInputMethod,
@@ -155,6 +162,59 @@ class TestNutritionStateContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: coach_response.json
+# ---------------------------------------------------------------------------
+
+
+class TestCoachResponseContract:
+    """Canonical coach response fixture must parse through CoachResponse."""
+
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("coach_response.json")
+
+    def test_response_parses(self, fixture: JSONDict) -> None:
+        response = CoachResponse.model_validate(fixture)
+        assert response.dayKey == "2026-03-18"
+        assert response.computedAt == "2026-03-18T12:00:00Z"
+        assert response.source == "rules"
+        assert len(response.insights) == 2
+        assert response.meta.available is True
+        assert response.meta.emptyReason is None
+        assert response.meta.isDegraded is False
+
+    def test_top_insight_parses(self, fixture: JSONDict) -> None:
+        response = CoachResponse.model_validate(fixture)
+        assert response.topInsight is not None
+        assert response.topInsight.id == "2026-03-18-under-logging"
+        assert response.topInsight.type == "under_logging"
+        assert response.topInsight.actionType == "log_next_meal"
+        assert response.topInsight.reasonCodes == [
+            "valid_logging_days_7_low",
+            "missing_nutrition_meals_today",
+        ]
+        assert response.topInsight.confidence == 0.91
+        assert response.topInsight.isPositive is False
+
+    def test_secondary_insight_parses(self, fixture: JSONDict) -> None:
+        response = CoachResponse.model_validate(fixture)
+        secondary = response.insights[1]
+        assert secondary.type == "positive_momentum"
+        assert secondary.actionType == "open_chat"
+        assert secondary.validUntil is None
+        assert secondary.isPositive is True
+
+    def test_fixture_top_level_keys_match_schema(self, fixture: JSONDict) -> None:
+        expected_keys = set(CoachResponse.model_fields.keys())
+        actual_keys = set(fixture.keys())
+        assert actual_keys == expected_keys, (
+            f"Fixture keys drift. "
+            f"Missing from fixture: {expected_keys - actual_keys}. "
+            f"Extra in fixture: {actual_keys - expected_keys}."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Fixture: gateway_reject.json
 # ---------------------------------------------------------------------------
 
@@ -223,3 +283,32 @@ class TestEnumParity:
 
     def test_ai_tier_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["AiTier"]) == sorted(["free", "premium"])
+
+
+class TestCoachContractEnums:
+    """Coach contract Literals must stay aligned with the v1 contract doc."""
+
+    def test_coach_insight_type_values(self) -> None:
+        assert sorted(get_args(CoachInsightType)) == sorted(
+            [
+                "under_logging",
+                "high_unknown_meal_details",
+                "low_protein_consistency",
+                "calorie_under_target",
+                "positive_momentum",
+                "stable",
+            ]
+        )
+
+    def test_coach_action_type_values(self) -> None:
+        assert sorted(get_args(CoachActionType)) == sorted(
+            ["log_next_meal", "open_chat", "review_history", "none"]
+        )
+
+    def test_coach_source_values(self) -> None:
+        assert sorted(get_args(CoachSource)) == ["rules"]
+
+    def test_coach_empty_reason_values(self) -> None:
+        assert sorted(get_args(CoachEmptyReason)) == sorted(
+            ["no_data", "insufficient_data"]
+        )

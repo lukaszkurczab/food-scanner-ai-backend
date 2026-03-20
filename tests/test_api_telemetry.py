@@ -61,15 +61,43 @@ def _matches_filters(
     payload: dict[str, object],
     filters: list[tuple[str, str, object]],
 ) -> bool:
+    def _matches_ordered_filter(actual: object | None, expected: object, operator: str) -> bool:
+        if isinstance(actual, str) and isinstance(expected, str):
+            if operator == ">=":
+                return actual >= expected
+            if operator == "<=":
+                return actual <= expected
+            if operator == "<":
+                return actual < expected
+            return False
+
+        if (
+            isinstance(actual, int | float)
+            and not isinstance(actual, bool)
+            and isinstance(expected, int | float)
+            and not isinstance(expected, bool)
+        ):
+            actual_number = float(actual)
+            expected_number = float(expected)
+            if operator == ">=":
+                return actual_number >= expected_number
+            if operator == "<=":
+                return actual_number <= expected_number
+            if operator == "<":
+                return actual_number < expected_number
+            return False
+
+        return False
+
     for field_path, op_string, expected in filters:
         actual = payload.get(field_path)
         if op_string == "==" and actual != expected:
             return False
-        if op_string == ">=" and not (actual is not None and actual >= expected):
+        if op_string == ">=" and not _matches_ordered_filter(actual, expected, op_string):
             return False
-        if op_string == "<=" and not (actual is not None and actual <= expected):
+        if op_string == "<=" and not _matches_ordered_filter(actual, expected, op_string):
             return False
-        if op_string == "<" and not (actual is not None and actual < expected):
+        if op_string == "<" and not _matches_ordered_filter(actual, expected, op_string):
             return False
     return True
 
@@ -331,6 +359,98 @@ def test_telemetry_batch_rejects_unknown_props_for_event(
     response = client.post(
         "/api/v2/telemetry/events/batch",
         json=build_payload({"props": {"mealInputMethod": "photo", "screen": "home"}}),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_accepts_coach_surface_events(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = {
+        "sessionId": "sess-1",
+        "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
+        "device": {"locale": "pl-PL", "tzOffsetMin": 60},
+        "events": [
+            {
+                "eventId": "evt-coach-1",
+                "name": "coach_card_viewed",
+                "ts": "2026-03-18T12:00:00Z",
+                "props": {
+                    "insightType": "under_logging",
+                    "actionType": "log_next_meal",
+                    "isPositive": False,
+                },
+            },
+            {
+                "eventId": "evt-coach-2",
+                "name": "coach_card_expanded",
+                "ts": "2026-03-18T12:00:10Z",
+                "props": {"insightType": "under_logging"},
+            },
+            {
+                "eventId": "evt-coach-3",
+                "name": "coach_card_cta_clicked",
+                "ts": "2026-03-18T12:00:20Z",
+                "props": {
+                    "insightType": "under_logging",
+                    "actionType": "log_next_meal",
+                    "targetScreen": "MealAddMethod",
+                },
+            },
+            {
+                "eventId": "evt-coach-4",
+                "name": "coach_empty_state_viewed",
+                "ts": "2026-03-18T12:00:30Z",
+                "props": {"emptyReason": "no_data"},
+            },
+        ],
+    }
+
+    response = client.post("/api/v2/telemetry/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 4,
+        "duplicateCount": 0,
+        "rejectedCount": 0,
+        "rejectedEvents": [],
+    }
+    assert firestore_client.storage["evt-coach-1"]["props"] == {
+        "insightType": "under_logging",
+        "actionType": "log_next_meal",
+        "isPositive": False,
+    }
+
+
+def test_telemetry_batch_rejects_disallowed_coach_props(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "coach_card_viewed",
+                "props": {
+                    "insightType": "under_logging",
+                    "actionType": "log_next_meal",
+                    "title": "Logging looks too light to coach well",
+                },
+            }
+        ),
     )
 
     assert response.status_code == 422

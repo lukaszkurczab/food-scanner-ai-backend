@@ -37,6 +37,10 @@ class StateDisabledError(Exception):
     """Raised when nutrition state computation is disabled by configuration."""
 
 
+class CoachUnavailableError(Exception):
+    """Raised when coach insights cannot be computed from required foundations."""
+
+
 class AiGatewayRateLimitError(Exception):
     """Raised when a user exceeds the AI gateway request rate limit."""
 

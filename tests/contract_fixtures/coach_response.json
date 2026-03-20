@@ -1,0 +1,63 @@
+{
+  "dayKey": "2026-03-18",
+  "computedAt": "2026-03-18T12:00:00Z",
+  "source": "rules",
+  "insights": [
+    {
+      "id": "2026-03-18-under-logging",
+      "type": "under_logging",
+      "priority": 100,
+      "title": "Your logging looks light today",
+      "body": "Log your next meal to make the rest of today easier to interpret.",
+      "actionLabel": "Log next meal",
+      "actionType": "log_next_meal",
+      "reasonCodes": [
+        "valid_logging_days_7_low",
+        "missing_nutrition_meals_today"
+      ],
+      "source": "rules",
+      "validUntil": "2026-03-18T23:59:59Z",
+      "confidence": 0.91,
+      "isPositive": false
+    },
+    {
+      "id": "2026-03-18-positive-momentum",
+      "type": "positive_momentum",
+      "priority": 40,
+      "title": "Your recent consistency is helping",
+      "body": "Keep the streak going with one more complete meal log today.",
+      "actionLabel": "Open chat",
+      "actionType": "open_chat",
+      "reasonCodes": [
+        "consistency_improving",
+        "streak_positive"
+      ],
+      "source": "rules",
+      "validUntil": null,
+      "confidence": 0.74,
+      "isPositive": true
+    }
+  ],
+  "topInsight": {
+    "id": "2026-03-18-under-logging",
+    "type": "under_logging",
+    "priority": 100,
+    "title": "Your logging looks light today",
+    "body": "Log your next meal to make the rest of today easier to interpret.",
+    "actionLabel": "Log next meal",
+    "actionType": "log_next_meal",
+    "reasonCodes": [
+      "valid_logging_days_7_low",
+      "missing_nutrition_meals_today"
+    ],
+    "source": "rules",
+    "validUntil": "2026-03-18T23:59:59Z",
+    "confidence": 0.91,
+    "isPositive": false
+  },
+  "meta": {
+    "available": true,
+    "emptyReason": null,
+    "isDegraded": false
+  }
+}

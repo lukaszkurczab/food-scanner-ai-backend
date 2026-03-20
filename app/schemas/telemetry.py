@@ -35,6 +35,10 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "notification_scheduled",
         "notification_fired",
         "notification_opened",
+        "coach_card_viewed",
+        "coach_card_expanded",
+        "coach_card_cta_clicked",
+        "coach_empty_state_viewed",
     }
 )
 
@@ -58,6 +62,12 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "notification_opened": frozenset(
         {"notificationType", "origin", "openedFromBackground", "actionIdentifier"}
     ),
+    "coach_card_viewed": frozenset({"insightType", "actionType", "isPositive"}),
+    "coach_card_expanded": frozenset({"insightType"}),
+    "coach_card_cta_clicked": frozenset(
+        {"insightType", "actionType", "targetScreen"}
+    ),
+    "coach_empty_state_viewed": frozenset({"emptyReason"}),
 }
 
 def _is_allowed_prop_value(value: Any) -> bool:
