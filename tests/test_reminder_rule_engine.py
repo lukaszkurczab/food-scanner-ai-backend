@@ -55,6 +55,12 @@ def _context(hour: int, minute: int) -> ReminderContextInput:
             ["recent_activity_detected"],
             _context(13, 0),
         ),
+        (
+            ReminderPreferencesInput(),
+            ReminderActivityInput(daily_send_count=3),
+            ["frequency_cap_reached"],
+            _context(13, 0),
+        ),
     ],
 )
 def test_hard_suppressions_take_precedence(
@@ -288,6 +294,88 @@ def test_reason_codes_are_deterministic_for_combined_suppressions() -> None:
         "already_logged_recently",
         "recent_activity_detected",
     ]
+
+
+def test_frequency_cap_suppresses_when_daily_limit_reached() -> None:
+    """When the daily send count >= DAILY_REMINDER_CAP, the engine must suppress."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(daily_send_count=3),
+        context=_context(13, 0),
+    )
+
+    assert decision.decision == "suppress"
+    assert decision.kind is None
+    assert decision.reasonCodes == ["frequency_cap_reached"]
+    assert decision.confidence == 1.0
+
+
+def test_frequency_cap_does_not_suppress_below_limit() -> None:
+    """Below the cap, send decisions must still work normally."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(daily_send_count=2),
+        context=_context(13, 0),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+
+
+def test_frequency_cap_ordering_with_other_suppressions() -> None:
+    """Frequency cap appears in deterministic order alongside other suppressions."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            reminders_enabled=False,
+            quiet_hours=ReminderQuietHours(start_hour=22, end_hour=7),
+        ),
+        activity=ReminderActivityInput(
+            already_logged_recently=True,
+            recent_activity_detected=True,
+            daily_send_count=5,
+        ),
+        context=_context(23, 15),
+    )
+
+    assert decision.decision == "suppress"
+    assert decision.reasonCodes == [
+        "reminders_disabled",
+        "quiet_hours",
+        "frequency_cap_reached",
+        "already_logged_recently",
+        "recent_activity_detected",
+    ]
+
+
+def test_frequency_cap_valid_until_is_end_of_day() -> None:
+    """Frequency cap suppression should last until end of the local day."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(daily_send_count=3),
+        context=_context(14, 0),
+    )
+
+    assert decision.decision == "suppress"
+    assert decision.validUntil == "2026-03-18T23:59:59Z"
 
 
 def test_canonical_utc_timestamps_strip_microseconds_for_send() -> None:

@@ -71,6 +71,9 @@ def test_get_reminder_decision_returns_rule_engine_output(
         "app.services.reminder_service.evaluate_reminder_decision",
         return_value=decision,
     )
+    record_send = mocker.patch(
+        "app.services.reminder_service.record_send_decision",
+    )
     mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.utc_now",
@@ -80,6 +83,7 @@ def test_get_reminder_decision_returns_rule_engine_output(
     response = asyncio.run(get_reminder_decision("user-1", day_key="2026-03-18"))
 
     assert response == decision
+    record_send.assert_called_once_with("user-1", state.dayKey)
     get_state.assert_called_once_with("user-1", day_key="2026-03-18")
     get_prefs.assert_called_once_with("user-1")
     build_inputs.assert_called_once_with(
@@ -228,3 +232,51 @@ def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
         asyncio.run(get_reminder_decision("user-1"))
 
     assert "invalid decision" in str(exc_info.value).lower()
+
+
+def test_get_reminder_decision_does_not_record_send_for_suppress(
+    mocker: MockerFixture,
+) -> None:
+    """record_send_decision must NOT be called when the decision is suppress."""
+    state = _load_state_fixture()
+    suppress_decision = ReminderDecision(
+        dayKey="2026-03-18",
+        computedAt="2026-03-18T12:00:00Z",
+        decision="suppress",
+        reasonCodes=["reminders_disabled"],
+        confidence=1.0,
+        validUntil="2026-03-18T23:59:59Z",
+    )
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
+    mocker.patch(
+        "app.services.reminder_service.get_nutrition_state",
+        return_value=state,
+    )
+    mocker.patch(
+        "app.services.reminder_service.get_notification_prefs",
+        return_value={},
+    )
+    mocker.patch(
+        "app.services.reminder_service.build_reminder_inputs",
+        return_value=ReminderInputs(
+            preferences=ReminderPreferencesInput(reminders_enabled=False),
+            activity=ReminderActivityInput(),
+            now_local=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+        ),
+    )
+    mocker.patch(
+        "app.services.reminder_service.evaluate_reminder_decision",
+        return_value=suppress_decision,
+    )
+    record_send = mocker.patch(
+        "app.services.reminder_service.record_send_decision",
+    )
+    mocker.patch(
+        "app.services.reminder_service.utc_now",
+        return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+    )
+
+    response = asyncio.run(get_reminder_decision("user-1"))
+
+    assert response.decision == "suppress"
+    record_send.assert_not_called()

@@ -13,10 +13,12 @@ NEXT_MEAL_WINDOW_RADIUS_MIN = 90
 COMPLETE_DAY_WINDOW_RADIUS_MIN = 120
 RECENT_ACTIVITY_SUPPRESSION_MIN = 90
 LATEST_COMPLETE_DAY_START_MIN = 18 * 60
+DAILY_REMINDER_CAP = 3
 
 REASON_CODE_ORDER: tuple[ReminderReasonCode, ...] = (
     "reminders_disabled",
     "quiet_hours",
+    "frequency_cap_reached",
     "already_logged_recently",
     "recent_activity_detected",
     "preferred_window_open",
@@ -56,6 +58,7 @@ class ReminderPreferencesInput:
 class ReminderActivityInput:
     recent_activity_detected: bool = False
     already_logged_recently: bool = False
+    daily_send_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -288,6 +291,8 @@ def _collect_suppression_reason_codes(
         reason_codes.append("reminders_disabled")
     if _is_within_quiet_hours(current_min, preferences.quiet_hours):
         reason_codes.append("quiet_hours")
+    if activity.daily_send_count >= DAILY_REMINDER_CAP:
+        reason_codes.append("frequency_cap_reached")
     if activity.already_logged_recently:
         reason_codes.append("already_logged_recently")
     if activity.recent_activity_detected:

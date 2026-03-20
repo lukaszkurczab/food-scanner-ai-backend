@@ -60,6 +60,7 @@ SMART_REMINDER_SUPPRESSION_REASONS = frozenset(
         "quiet_hours",
         "already_logged_recently",
         "recent_activity_detected",
+        "frequency_cap_reached",
     }
 )
 SMART_REMINDER_NOOP_REASONS = frozenset(

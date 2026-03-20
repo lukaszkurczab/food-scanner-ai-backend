@@ -22,6 +22,7 @@ ReminderReasonCode = Literal[
     "already_logged_recently",
     "quiet_hours",
     "reminders_disabled",
+    "frequency_cap_reached",
     "insufficient_signal",
     "day_already_complete",
 ]
@@ -43,6 +44,7 @@ SUPPRESS_REASON_CODES: frozenset[ReminderReasonCode] = frozenset(
         "already_logged_recently",
         "quiet_hours",
         "reminders_disabled",
+        "frequency_cap_reached",
     }
 )
 NOOP_REASON_CODES: frozenset[ReminderReasonCode] = frozenset(

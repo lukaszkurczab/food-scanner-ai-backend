@@ -22,6 +22,7 @@
     "already_logged_recently",
     "quiet_hours",
     "reminders_disabled",
+    "frequency_cap_reached",
     "insufficient_signal",
     "day_already_complete"
   ]

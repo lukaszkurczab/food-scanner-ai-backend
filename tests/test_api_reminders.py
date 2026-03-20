@@ -192,3 +192,34 @@ def test_get_reminder_decision_returns_400_only_for_client_input_errors(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid day key. Expected YYYY-MM-DD."}
+
+
+def test_get_reminder_decision_returns_suppress_with_frequency_cap(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Endpoint returns a valid suppress decision when frequency cap is reached."""
+    mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        return_value=ReminderDecision(
+            dayKey="2026-03-18",
+            computedAt="2026-03-18T14:00:00Z",
+            decision="suppress",
+            reasonCodes=["frequency_cap_reached"],
+            confidence=1.0,
+            validUntil="2026-03-18T23:59:59Z",
+        ),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "suppress"
+    assert body["reasonCodes"] == ["frequency_cap_reached"]
+    assert body["confidence"] == 1.0
+    assert body["kind"] is None
+    assert body["scheduledAtUtc"] is None

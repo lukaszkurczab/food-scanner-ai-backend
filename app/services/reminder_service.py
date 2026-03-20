@@ -13,6 +13,7 @@ from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
 from app.services.notification_service import get_notification_prefs
 from app.services.nutrition_state_service import get_nutrition_state
+from app.services.reminder_decision_store import record_send_decision
 from app.services.reminder_inputs import build_reminder_inputs
 from app.services.reminder_rule_engine import ReminderContextInput, evaluate_reminder_decision
 
@@ -38,7 +39,7 @@ async def get_reminder_decision(
     )
 
     try:
-        return evaluate_reminder_decision(
+        decision = evaluate_reminder_decision(
             state=state,
             preferences=reminder_inputs.preferences,
             activity=reminder_inputs.activity,
@@ -48,6 +49,11 @@ async def get_reminder_decision(
         raise ReminderDecisionContractError(
             f"Rule engine produced an invalid decision: {exc}"
         ) from exc
+
+    if decision.decision == "send":
+        await record_send_decision(user_id, state.dayKey)
+
+    return decision
 
 
 def _ensure_required_foundations_available(state: NutritionStateResponse) -> None:
