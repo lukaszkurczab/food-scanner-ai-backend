@@ -558,7 +558,13 @@ def _minute_of_day(value: datetime) -> int:
 
 
 def _to_utc_z(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    """Serialize *value* to canonical ``YYYY-MM-DDTHH:MM:SSZ`` (exactly 20 chars).
+
+    The explicit ``strftime`` avoids ``isoformat()`` emitting sub-second
+    precision when the source datetime carries microseconds – which would
+    violate the contract enforced by :class:`ReminderDecision`.
+    """
+    return value.astimezone(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _end_of_local_day(now_local: datetime) -> datetime:

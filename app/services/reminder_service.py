@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from pydantic import ValidationError as PydanticValidationError
+
 from app.core.config import settings
 from app.core.datetime_utils import utc_now
-from app.core.exceptions import ReminderUnavailableError, SmartRemindersDisabledError
+from app.core.exceptions import (
+    ReminderDecisionContractError,
+    ReminderUnavailableError,
+    SmartRemindersDisabledError,
+)
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
 from app.services.notification_service import get_notification_prefs
@@ -31,12 +37,17 @@ async def get_reminder_decision(
         now_utc=now_utc,
     )
 
-    return evaluate_reminder_decision(
-        state=state,
-        preferences=reminder_inputs.preferences,
-        activity=reminder_inputs.activity,
-        context=ReminderContextInput(now_local=reminder_inputs.now_local),
-    )
+    try:
+        return evaluate_reminder_decision(
+            state=state,
+            preferences=reminder_inputs.preferences,
+            activity=reminder_inputs.activity,
+            context=ReminderContextInput(now_local=reminder_inputs.now_local),
+        )
+    except PydanticValidationError as exc:
+        raise ReminderDecisionContractError(
+            f"Rule engine produced an invalid decision: {exc}"
+        ) from exc
 
 
 def _ensure_required_foundations_available(state: NutritionStateResponse) -> None:

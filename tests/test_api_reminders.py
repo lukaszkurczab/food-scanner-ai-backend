@@ -3,6 +3,7 @@ from pytest_mock import MockerFixture
 
 from app.core.exceptions import (
     FirestoreServiceError,
+    ReminderDecisionContractError,
     ReminderUnavailableError,
     SmartRemindersDisabledError,
     StateDisabledError,
@@ -147,3 +148,47 @@ def test_get_reminder_decision_returns_500_for_backend_failures(
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Failed to compute reminder decision"}
+
+
+def test_get_reminder_decision_returns_500_for_contract_violation_not_400(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Internal decision contract violations must surface as 500, not 400.
+
+    A Pydantic validation error inside the rule engine is a backend bug,
+    not a client input error — so it must never look like a bad request.
+    """
+    mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        side_effect=ReminderDecisionContractError(
+            "Rule engine produced an invalid decision: computedAt length > 20"
+        ),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Reminder decision contract violation"}
+
+
+def test_get_reminder_decision_returns_400_only_for_client_input_errors(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """ValueError from day_key parsing is still a legitimate 400."""
+    mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        side_effect=ValueError("Invalid day key. Expected YYYY-MM-DD."),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-13-40",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid day key. Expected YYYY-MM-DD."}

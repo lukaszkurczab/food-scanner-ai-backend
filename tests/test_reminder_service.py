@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
-from app.core.exceptions import FirestoreServiceError, ReminderUnavailableError, SmartRemindersDisabledError
+from pydantic import ValidationError as PydanticValidationError
+
+from app.core.exceptions import (
+    FirestoreServiceError,
+    ReminderDecisionContractError,
+    ReminderUnavailableError,
+    SmartRemindersDisabledError,
+)
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
 from app.services.reminder_inputs import ReminderInputs
@@ -174,3 +181,50 @@ def test_get_reminder_decision_propagates_input_builder_failures_instead_of_mask
 
     with pytest.raises(FirestoreServiceError):
         asyncio.run(get_reminder_decision("user-1"))
+
+
+def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
+    mocker: MockerFixture,
+) -> None:
+    """If the rule engine somehow produces a decision that fails Pydantic
+    validation (e.g. microsecond timestamps exceeding max_length=20),
+    it must surface as ReminderDecisionContractError — not as a bare
+    PydanticValidationError or, worse, a ValueError mapped to 400."""
+    state = _load_state_fixture()
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
+    mocker.patch(
+        "app.services.reminder_service.get_nutrition_state",
+        return_value=state,
+    )
+    mocker.patch(
+        "app.services.reminder_service.get_notification_prefs",
+        return_value={},
+    )
+    mocker.patch(
+        "app.services.reminder_service.build_reminder_inputs",
+        return_value=ReminderInputs(
+            preferences=ReminderPreferencesInput(reminders_enabled=False),
+            activity=ReminderActivityInput(),
+            now_local=datetime(2026, 3, 18, 13, 0, tzinfo=UTC),
+        ),
+    )
+    mocker.patch(
+        "app.services.reminder_service.evaluate_reminder_decision",
+        side_effect=PydanticValidationError.from_exception_data(
+            title="ReminderDecision",
+            line_errors=[
+                {
+                    "type": "string_too_long",
+                    "loc": ("computedAt",),
+                    "msg": "String should have at most 20 characters",
+                    "input": "2026-03-18T13:00:33.999999Z",
+                    "ctx": {"max_length": 20},
+                }
+            ],
+        ),
+    )
+
+    with pytest.raises(ReminderDecisionContractError) as exc_info:
+        asyncio.run(get_reminder_decision("user-1"))
+
+    assert "invalid decision" in str(exc_info.value).lower()

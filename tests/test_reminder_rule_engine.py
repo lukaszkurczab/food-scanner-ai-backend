@@ -288,3 +288,73 @@ def test_reason_codes_are_deterministic_for_combined_suppressions() -> None:
         "already_logged_recently",
         "recent_activity_detected",
     ]
+
+
+def test_canonical_utc_timestamps_strip_microseconds_for_send() -> None:
+    """Regression: datetime.now(UTC) carries microseconds. All emitted timestamps
+    must conform to YYYY-MM-DDTHH:MM:SSZ (exactly 20 chars, no sub-seconds)."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=450, end_min=570)
+        ),
+        activity=ReminderActivityInput(),
+        context=ReminderContextInput(
+            now_local=datetime(2026, 3, 18, 8, 20, 45, 123456, tzinfo=UTC)
+        ),
+    )
+
+    assert decision.decision == "send"
+    assert decision.computedAt == "2026-03-18T08:20:45Z"
+    assert len(decision.computedAt) == 20
+    assert "." not in decision.computedAt
+    assert decision.scheduledAtUtc is not None
+    assert len(decision.scheduledAtUtc) == 20
+    assert "." not in decision.scheduledAtUtc
+    assert len(decision.validUntil) == 20
+    assert "." not in decision.validUntil
+
+
+def test_canonical_utc_timestamps_strip_microseconds_for_suppress() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(reminders_enabled=False),
+        activity=ReminderActivityInput(),
+        context=ReminderContextInput(
+            now_local=datetime(2026, 3, 18, 13, 0, 33, 999999, tzinfo=UTC)
+        ),
+    )
+
+    assert decision.decision == "suppress"
+    assert decision.computedAt == "2026-03-18T13:00:33Z"
+    assert len(decision.computedAt) == 20
+    assert "." not in decision.computedAt
+    assert len(decision.validUntil) == 20
+    assert "." not in decision.validUntil
+
+
+def test_canonical_utc_timestamps_strip_microseconds_for_noop() -> None:
+    state = _load_state_fixture()
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        context=ReminderContextInput(
+            now_local=datetime(2026, 3, 18, 20, 0, 0, 500000, tzinfo=UTC)
+        ),
+    )
+
+    assert decision.decision == "noop"
+    assert decision.computedAt == "2026-03-18T20:00:00Z"
+    assert len(decision.computedAt) == 20
+    assert "." not in decision.computedAt
+    assert len(decision.validUntil) == 20
+    assert "." not in decision.validUntil

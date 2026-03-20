@@ -4,6 +4,7 @@ from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request, raise_http_exception, raise_service_unavailable
 from app.core.exceptions import (
     FirestoreServiceError,
+    ReminderDecisionContractError,
     ReminderUnavailableError,
     SmartRemindersDisabledError,
     StateDisabledError,
@@ -31,17 +32,23 @@ async def get_user_reminder_decision_me(
 ) -> ReminderDecision:
     try:
         return await get_reminder_decision(current_user.uid, day_key=day)
-    except ValueError as exc:
-        raise_bad_request(exc)
     except (
         StateDisabledError,
         SmartRemindersDisabledError,
         ReminderUnavailableError,
     ) as exc:
         raise_service_unavailable(exc, detail="Smart reminders are unavailable")
+    except ReminderDecisionContractError as exc:
+        raise_http_exception(
+            status_code=500,
+            detail="Reminder decision contract violation",
+            cause=exc,
+        )
     except FirestoreServiceError as exc:
         raise_http_exception(
             status_code=500,
             detail="Failed to compute reminder decision",
             cause=exc,
         )
+    except ValueError as exc:
+        raise_bad_request(exc)

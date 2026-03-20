@@ -49,6 +49,13 @@ class ReminderUnavailableError(Exception):
     """Raised when required reminder foundations are unavailable."""
 
 
+class ReminderDecisionContractError(Exception):
+    """Raised when the rule engine produces a decision that violates the contract.
+
+    This is always an internal error (500), never a client input error (400).
+    """
+
+
 class AiGatewayRateLimitError(Exception):
     """Raised when a user exceeds the AI gateway request rate limit."""
 
