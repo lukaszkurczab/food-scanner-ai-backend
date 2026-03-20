@@ -176,6 +176,11 @@ def _normalize_notifications_prefs_payload(
 ) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
 
+    if "smartRemindersEnabled" in payload:
+        if not isinstance(payload["smartRemindersEnabled"], bool):
+            raise NotificationPrefsValidationError("Invalid smartRemindersEnabled.")
+        normalized["smartRemindersEnabled"] = payload["smartRemindersEnabled"]
+
     if "motivationEnabled" in payload:
         if not isinstance(payload["motivationEnabled"], bool):
             raise NotificationPrefsValidationError("Invalid motivationEnabled.")
@@ -212,6 +217,10 @@ def _normalize_notifications_prefs_doc(raw: object) -> dict[str, Any]:
         return {}
 
     normalized: dict[str, Any] = {}
+
+    smart_reminders_enabled = notifications.get("smartRemindersEnabled")
+    if isinstance(smart_reminders_enabled, bool):
+        normalized["smartRemindersEnabled"] = smart_reminders_enabled
 
     motivation_enabled = notifications.get("motivationEnabled")
     if isinstance(motivation_enabled, bool):

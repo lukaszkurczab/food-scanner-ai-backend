@@ -189,7 +189,7 @@ def test_get_notification_prefs_returns_backend_payload(
 ) -> None:
     get_notification_prefs = mocker.patch(
         "app.api.routes.notifications.notification_service.get_notification_prefs",
-        return_value={"motivationEnabled": True, "daysAhead": 7},
+        return_value={"smartRemindersEnabled": True, "motivationEnabled": True, "daysAhead": 7},
     )
 
     response = client.get(
@@ -200,6 +200,7 @@ def test_get_notification_prefs_returns_backend_payload(
     assert response.status_code == 200
     assert response.json() == {
         "notifications": {
+            "smartRemindersEnabled": True,
             "motivationEnabled": True,
             "statsEnabled": None,
             "weekdays0to6": None,
@@ -216,18 +217,29 @@ def test_post_notification_prefs_returns_backend_payload(
 ) -> None:
     update_notification_prefs = mocker.patch(
         "app.api.routes.notifications.notification_service.update_notification_prefs",
-        return_value={"motivationEnabled": False, "statsEnabled": True},
+        return_value={
+            "smartRemindersEnabled": False,
+            "motivationEnabled": False,
+            "statsEnabled": True,
+        },
     )
 
     response = client.post(
         "/api/v1/users/me/notifications/preferences",
-        json={"notifications": {"motivationEnabled": False, "statsEnabled": True}},
+        json={
+            "notifications": {
+                "smartRemindersEnabled": False,
+                "motivationEnabled": False,
+                "statsEnabled": True,
+            }
+        },
         headers=auth_headers("user-1"),
     )
 
     assert response.status_code == 200
     assert response.json() == {
         "notifications": {
+            "smartRemindersEnabled": False,
             "motivationEnabled": False,
             "statsEnabled": True,
             "weekdays0to6": None,
@@ -238,5 +250,9 @@ def test_post_notification_prefs_returns_backend_payload(
     }
     update_notification_prefs.assert_called_once_with(
         "user-1",
-        {"motivationEnabled": False, "statsEnabled": True},
+        {
+            "smartRemindersEnabled": False,
+            "motivationEnabled": False,
+            "statsEnabled": True,
+        },
     )

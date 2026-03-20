@@ -7,5 +7,22 @@
   "GatewayRejectReasons": ["OFF_TOPIC", "TOO_SHORT"],
   "TopRisk": ["none", "under_logging", "low_protein_consistency", "high_unknown_meal_details", "calorie_under_target"],
   "CoachPriority": ["maintain", "logging_foundation", "protein_consistency", "meal_detail_quality", "calorie_adherence"],
-  "AiTier": ["free", "premium"]
+  "AiTier": ["free", "premium"],
+  "ReminderDecisionType": ["send", "suppress", "noop"],
+  "ReminderKind": ["log_first_meal", "log_next_meal", "complete_day"],
+  "ReminderReasonCode": [
+    "preferred_window_open",
+    "preferred_window_today",
+    "habit_window_match",
+    "habit_window_today",
+    "day_empty",
+    "day_partially_logged",
+    "logging_usually_happens_now",
+    "recent_activity_detected",
+    "already_logged_recently",
+    "quiet_hours",
+    "reminders_disabled",
+    "insufficient_signal",
+    "day_already_complete"
+  ]
 }

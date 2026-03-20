@@ -96,15 +96,14 @@ The backend exposes two API versions:
 **v2 follow-up technical surface**:
 
 - `GET /api/v2/users/me/coach?day=YYYY-MM-DD` — Coach Insights technical surface built on top of nutrition state + habit signals. No separate coach feature flag is planned.
+- `GET /api/v2/users/me/reminders/decision?day=YYYY-MM-DD` — Smart Reminders v1 decision surface. It returns backend reminder decision semantics (`send`, `suppress`, `noop`) for a local day. This is a decision API, not reminder delivery orchestration.
 
-**Coach Insights telemetry allowlist**:
+**Narrow telemetry allowlists**:
 
-- `coach_card_viewed` — `insightType`, `actionType`, `isPositive`
-- `coach_card_expanded` — `insightType`
-- `coach_card_cta_clicked` — `insightType`, `actionType`, `targetScreen`
-- `coach_empty_state_viewed` — `emptyReason`
+- Coach Insights telemetry allowlist is documented in [Coach Insights v1 Semantics](./docs/coach-insights-v1.md).
+- Smart Reminders telemetry allowlist is documented in [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md).
 
-Coach insight telemetry stays intentionally narrow. Do not send card `title`, `body`, reason text, or any user-authored content in telemetry props.
+Telemetry props must stay categorical and bounded. Do not send copy, raw reason text, user-authored content, or sensitive profile data.
 
 ## Feature flags
 
@@ -113,6 +112,7 @@ Coach insight telemetry stays intentionally narrow. Do not send card `title`, `b
 | `TELEMETRY_ENABLED` | `false` | Accept v2 batch telemetry events. Also requires mobile `EXPO_PUBLIC_ENABLE_TELEMETRY=true`. |
 | `STATE_ENABLED` | `false` | Serve v2 nutrition state. Also requires mobile `EXPO_PUBLIC_ENABLE_V2_STATE=true`. |
 | `HABITS_ENABLED` | `false` | Compute habit signals (consumed inside state endpoint and standalone). |
+| `SMART_REMINDERS_ENABLED` | `false` | Rollout flag for the v2 Smart Reminders decision surface. Keep separate from existing reminder delivery controls for precise rollback. |
 | `AI_GATEWAY_ENABLED` | `true` | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass. |
 | `AI_GATEWAY_ML_ENABLED` | `false` | ML classifier for gateway. Do not enable without a trained model. |
 
@@ -133,6 +133,8 @@ Every HTTP response includes `X-Request-ID`.  Use it to correlate client failure
 
 - [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
+- [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
+- [Smart Reminders v1 Rollout](./docs/smart-reminders-v1-rollout.md) — rollout preconditions, verification, rollback path
 
 ## Required Environment Variables
 

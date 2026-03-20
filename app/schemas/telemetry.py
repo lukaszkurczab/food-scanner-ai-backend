@@ -39,7 +39,37 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "coach_card_expanded",
         "coach_card_cta_clicked",
         "coach_empty_state_viewed",
+        "smart_reminder_suppressed",
+        "smart_reminder_scheduled",
+        "smart_reminder_noop",
+        "smart_reminder_decision_failed",
+        "smart_reminder_schedule_failed",
     }
+)
+
+SMART_REMINDER_CONFIDENCE_BUCKETS = frozenset({"low", "medium", "high"})
+SMART_REMINDER_SCHEDULED_WINDOWS = frozenset(
+    {"overnight", "morning", "afternoon", "evening", "late_evening"}
+)
+SMART_REMINDER_KINDS = frozenset(
+    {"log_first_meal", "log_next_meal", "complete_day"}
+)
+SMART_REMINDER_SUPPRESSION_REASONS = frozenset(
+    {
+        "reminders_disabled",
+        "quiet_hours",
+        "already_logged_recently",
+        "recent_activity_detected",
+    }
+)
+SMART_REMINDER_NOOP_REASONS = frozenset(
+    {"insufficient_signal", "day_already_complete"}
+)
+SMART_REMINDER_DECISION_FAILURE_REASONS = frozenset(
+    {"invalid_payload", "service_unavailable"}
+)
+SMART_REMINDER_SCHEDULE_FAILURE_REASONS = frozenset(
+    {"permission_unavailable", "invalid_time", "schedule_error"}
 )
 
 DISALLOWED_TELEMETRY_PROP_KEY_PATTERN = re.compile(
@@ -68,6 +98,49 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
         {"insightType", "actionType", "targetScreen"}
     ),
     "coach_empty_state_viewed": frozenset({"emptyReason"}),
+    "smart_reminder_suppressed": frozenset(
+        {"decision", "suppressionReason", "confidenceBucket"}
+    ),
+    "smart_reminder_scheduled": frozenset(
+        {"reminderKind", "decision", "confidenceBucket", "scheduledWindow"}
+    ),
+    "smart_reminder_noop": frozenset(
+        {"decision", "noopReason", "confidenceBucket"}
+    ),
+    "smart_reminder_decision_failed": frozenset({"failureReason"}),
+    "smart_reminder_schedule_failed": frozenset(
+        {"reminderKind", "decision", "confidenceBucket", "failureReason"}
+    ),
+}
+
+ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
+    str, dict[str, frozenset[str]]
+] = {
+    "smart_reminder_suppressed": {
+        "decision": frozenset({"suppress"}),
+        "suppressionReason": SMART_REMINDER_SUPPRESSION_REASONS,
+        "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
+    },
+    "smart_reminder_scheduled": {
+        "reminderKind": SMART_REMINDER_KINDS,
+        "decision": frozenset({"send"}),
+        "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
+        "scheduledWindow": SMART_REMINDER_SCHEDULED_WINDOWS,
+    },
+    "smart_reminder_noop": {
+        "decision": frozenset({"noop"}),
+        "noopReason": SMART_REMINDER_NOOP_REASONS,
+        "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
+    },
+    "smart_reminder_decision_failed": {
+        "failureReason": SMART_REMINDER_DECISION_FAILURE_REASONS,
+    },
+    "smart_reminder_schedule_failed": {
+        "reminderKind": SMART_REMINDER_KINDS,
+        "decision": frozenset({"send"}),
+        "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
+        "failureReason": SMART_REMINDER_SCHEDULE_FAILURE_REASONS,
+    },
 }
 
 def _is_allowed_prop_value(value: Any) -> bool:
@@ -168,6 +241,16 @@ class TelemetryEventInput(BaseModel):
             if key not in allowed_props:
                 raise ValueError(
                     f"Telemetry property '{key}' is not allowed for event '{self.name}'"
+                )
+
+        allowed_enum_values = ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES.get(self.name, {})
+        for key, allowed_values in allowed_enum_values.items():
+            if key not in props:
+                continue
+            value = props[key]
+            if not isinstance(value, str) or value not in allowed_values:
+                raise ValueError(
+                    f"Telemetry property '{key}' has invalid value for event '{self.name}'"
                 )
 
         return self

@@ -139,6 +139,36 @@ def _build_user_hash(user_id: str) -> str:
     return sha256(user_id.encode("utf-8")).hexdigest()
 
 
+def count_events_for_user(
+    *,
+    user_id: str,
+    event_name: str,
+    start_at: datetime,
+    end_at: datetime,
+) -> int:
+    collection_ref = get_firestore().collection(COLLECTION_NAME)
+    query = (
+        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        .where("name", "==", event_name)
+        .where("ts", ">=", _serialize_timestamp(start_at))
+        .where("ts", "<=", _serialize_timestamp(end_at))
+    )
+
+    try:
+        return sum(1 for _ in query.stream())
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "telemetry.count.firestore_error",
+            extra={
+                "user_id": user_id,
+                "event_name": event_name,
+                "start_at": _serialize_timestamp(start_at),
+                "end_at": _serialize_timestamp(end_at),
+            },
+        )
+        raise FirestoreServiceError("Failed to count telemetry events.") from exc
+
+
 def ingest_batch(
     request: TelemetryBatchRequest,
     context: TelemetryRequestContext,

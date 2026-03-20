@@ -430,6 +430,109 @@ def test_telemetry_batch_accepts_coach_surface_events(
     }
 
 
+def test_telemetry_batch_accepts_smart_reminder_events(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    payload = {
+        "sessionId": "sess-1",
+        "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
+        "device": {"locale": "pl-PL", "tzOffsetMin": 60},
+        "events": [
+            {
+                "eventId": "evt-reminder-1",
+                "name": "smart_reminder_suppressed",
+                "ts": "2026-03-18T12:00:00Z",
+                "props": {
+                    "decision": "suppress",
+                    "suppressionReason": "quiet_hours",
+                    "confidenceBucket": "high",
+                },
+            },
+            {
+                "eventId": "evt-reminder-2",
+                "name": "smart_reminder_scheduled",
+                "ts": "2026-03-18T12:00:10Z",
+                "props": {
+                    "reminderKind": "complete_day",
+                    "decision": "send",
+                    "confidenceBucket": "medium",
+                    "scheduledWindow": "evening",
+                },
+            },
+            {
+                "eventId": "evt-reminder-3",
+                "name": "smart_reminder_noop",
+                "ts": "2026-03-18T12:00:20Z",
+                "props": {
+                    "decision": "noop",
+                    "noopReason": "insufficient_signal",
+                    "confidenceBucket": "low",
+                },
+            },
+            {
+                "eventId": "evt-reminder-4",
+                "name": "smart_reminder_decision_failed",
+                "ts": "2026-03-18T12:00:30Z",
+                "props": {
+                    "failureReason": "invalid_payload",
+                },
+            },
+            {
+                "eventId": "evt-reminder-5",
+                "name": "smart_reminder_schedule_failed",
+                "ts": "2026-03-18T12:00:40Z",
+                "props": {
+                    "reminderKind": "log_next_meal",
+                    "decision": "send",
+                    "confidenceBucket": "high",
+                    "failureReason": "invalid_time",
+                },
+            },
+        ],
+    }
+
+    response = client.post("/api/v2/telemetry/events/batch", json=payload)
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 5,
+        "duplicateCount": 0,
+        "rejectedCount": 0,
+        "rejectedEvents": [],
+    }
+    assert firestore_client.storage["evt-reminder-1"]["props"] == {
+        "decision": "suppress",
+        "suppressionReason": "quiet_hours",
+        "confidenceBucket": "high",
+    }
+    assert firestore_client.storage["evt-reminder-2"]["props"] == {
+        "reminderKind": "complete_day",
+        "decision": "send",
+        "confidenceBucket": "medium",
+        "scheduledWindow": "evening",
+    }
+    assert firestore_client.storage["evt-reminder-3"]["props"] == {
+        "decision": "noop",
+        "noopReason": "insufficient_signal",
+        "confidenceBucket": "low",
+    }
+    assert firestore_client.storage["evt-reminder-4"]["props"] == {
+        "failureReason": "invalid_payload",
+    }
+    assert firestore_client.storage["evt-reminder-5"]["props"] == {
+        "reminderKind": "log_next_meal",
+        "decision": "send",
+        "confidenceBucket": "high",
+        "failureReason": "invalid_time",
+    }
+
+
 def test_telemetry_batch_rejects_disallowed_coach_props(
     mocker: MockerFixture,
 ) -> None:
@@ -454,6 +557,108 @@ def test_telemetry_batch_rejects_disallowed_coach_props(
     )
 
     assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_disallowed_smart_reminder_props(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "smart_reminder_scheduled",
+                "props": {
+                    "reminderKind": "log_next_meal",
+                    "decision": "send",
+                    "reasonCodes": ["habit_window_match"],
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_invalid_smart_reminder_enum_values(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json={
+            "sessionId": "sess-1",
+            "app": {"platform": "ios", "appVersion": "1.2.3", "build": "45"},
+            "device": {"locale": "pl-PL", "tzOffsetMin": 60},
+            "events": [
+                {
+                    "eventId": "evt-reminder-invalid-1",
+                    "name": "smart_reminder_scheduled",
+                    "ts": "2026-03-18T12:00:00Z",
+                    "props": {
+                        "reminderKind": "log_next_meal",
+                        "decision": "send",
+                        "confidenceBucket": "0.80-0.89",
+                        "scheduledWindow": "evening",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
+def test_telemetry_batch_rejects_smart_reminder_decision_computed_as_event_not_allowed(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "smart_reminder_decision_computed",
+                "props": {
+                    "reminderKind": "log_next_meal",
+                    "decision": "send",
+                    "confidenceBucket": "0.80-0.89",
+                    "scheduledWindow": "12:00-13:30",
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 0,
+        "duplicateCount": 0,
+        "rejectedCount": 1,
+        "rejectedEvents": [
+            {
+                "eventId": "evt-1",
+                "name": "smart_reminder_decision_computed",
+                "reason": "event_not_allowed",
+            }
+        ],
+    }
     assert firestore_client.storage == {}
 
 

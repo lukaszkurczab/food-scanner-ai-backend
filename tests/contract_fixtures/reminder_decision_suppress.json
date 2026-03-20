@@ -1,0 +1,12 @@
+{
+  "dayKey": "2026-03-18",
+  "computedAt": "2026-03-18T12:00:00Z",
+  "decision": "suppress",
+  "kind": null,
+  "reasonCodes": [
+    "quiet_hours"
+  ],
+  "scheduledAtUtc": null,
+  "confidence": 1.0,
+  "validUntil": "2026-03-18T22:00:00Z"
+}

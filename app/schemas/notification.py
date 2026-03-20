@@ -42,6 +42,7 @@ class NotificationQuietHours(BaseModel):
 
 
 class NotificationPrefsPayload(BaseModel):
+    smartRemindersEnabled: bool | None = None
     motivationEnabled: bool | None = None
     statsEnabled: bool | None = None
     weekdays0to6: list[int] | None = None

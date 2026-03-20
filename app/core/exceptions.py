@@ -41,6 +41,14 @@ class CoachUnavailableError(Exception):
     """Raised when coach insights cannot be computed from required foundations."""
 
 
+class SmartRemindersDisabledError(Exception):
+    """Raised when Smart Reminders decision surface is disabled by configuration."""
+
+
+class ReminderUnavailableError(Exception):
+    """Raised when required reminder foundations are unavailable."""
+
+
 class AiGatewayRateLimitError(Exception):
     """Raised when a user exceeds the AI gateway request rate limit."""
 

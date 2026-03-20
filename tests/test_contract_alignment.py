@@ -18,6 +18,7 @@ from typing import Any, get_args
 
 import pytest
 from pytest_mock import MockerFixture
+from pydantic import ValidationError
 
 from app.schemas.coach import (
     CoachMeta,
@@ -37,6 +38,16 @@ from app.schemas.meal import (
     MealUpsertRequest,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
+from app.schemas.reminders import (
+    ReminderDecision,
+    ReminderDecisionType,
+    ReminderKind,
+    ReminderReasonCode,
+)
+from app.schemas.telemetry import (
+    ALLOWED_TELEMETRY_EVENT_NAMES,
+    ALLOWED_TELEMETRY_EVENT_PROPS,
+)
 from app.services.ai_gateway_service import (
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
@@ -284,6 +295,290 @@ class TestCoachResponseContract:
 
 
 # ---------------------------------------------------------------------------
+# Fixture: reminder_decision.json
+# ---------------------------------------------------------------------------
+
+
+class TestReminderDecisionContract:
+    """Canonical reminder decision fixtures must parse through ReminderDecision."""
+
+    @pytest.fixture()
+    def send_fixture(self) -> JSONDict:
+        return _load_fixture("reminder_decision.json")
+
+    @pytest.fixture()
+    def suppress_fixture(self) -> JSONDict:
+        return _load_fixture("reminder_decision_suppress.json")
+
+    @pytest.fixture()
+    def noop_fixture(self) -> JSONDict:
+        return _load_fixture("reminder_decision_noop.json")
+
+    def test_send_response_parses(self, send_fixture: JSONDict) -> None:
+        decision = ReminderDecision.model_validate(send_fixture)
+        assert decision.dayKey == "2026-03-18"
+        assert decision.computedAt == "2026-03-18T12:00:00Z"
+        assert decision.decision == "send"
+        assert decision.kind == "log_next_meal"
+        assert decision.reasonCodes == [
+            "preferred_window_today",
+            "day_partially_logged",
+        ]
+        assert decision.scheduledAtUtc == "2026-03-18T18:30:00Z"
+        assert decision.confidence == 0.84
+        assert decision.validUntil == "2026-03-18T19:30:00Z"
+
+    def test_suppress_response_parses(self, suppress_fixture: JSONDict) -> None:
+        decision = ReminderDecision.model_validate(suppress_fixture)
+        assert decision.decision == "suppress"
+        assert decision.kind is None
+        assert decision.scheduledAtUtc is None
+        assert decision.reasonCodes == ["quiet_hours"]
+        assert decision.confidence == 1.0
+
+    def test_noop_response_parses(self, noop_fixture: JSONDict) -> None:
+        decision = ReminderDecision.model_validate(noop_fixture)
+        assert decision.decision == "noop"
+        assert decision.kind is None
+        assert decision.scheduledAtUtc is None
+        assert decision.reasonCodes == ["insufficient_signal"]
+        assert decision.confidence == 0.65
+
+    @pytest.mark.parametrize(
+        "fixture_name",
+        [
+            "reminder_decision.json",
+            "reminder_decision_suppress.json",
+            "reminder_decision_noop.json",
+        ],
+    )
+    def test_fixture_round_trips_through_serialization(self, fixture_name: str) -> None:
+        fixture = _load_fixture(fixture_name)
+        decision = ReminderDecision.model_validate(fixture)
+        serialized = decision.model_dump(mode="json")
+        reparsed = ReminderDecision.model_validate(serialized)
+        assert reparsed == decision
+
+    @pytest.mark.parametrize(
+        "fixture_name",
+        [
+            "reminder_decision.json",
+            "reminder_decision_suppress.json",
+            "reminder_decision_noop.json",
+        ],
+    )
+    def test_fixture_top_level_keys_match_schema(self, fixture_name: str) -> None:
+        fixture = _load_fixture(fixture_name)
+        expected_keys = set(ReminderDecision.model_fields.keys())
+        actual_keys = set(fixture.keys())
+        assert actual_keys == expected_keys, (
+            f"Fixture keys drift. "
+            f"Missing from fixture: {expected_keys - actual_keys}. "
+            f"Extra in fixture: {actual_keys - expected_keys}."
+        )
+
+    def test_send_requires_kind_and_schedule(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "send",
+                    "reasonCodes": ["preferred_window_open"],
+                    "confidence": 0.84,
+                    "validUntil": "2026-03-18T19:30:00Z",
+                }
+            )
+
+    def test_noop_rejects_kind_and_schedule(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "noop",
+                    "kind": "complete_day",
+                    "reasonCodes": ["insufficient_signal"],
+                    "scheduledAtUtc": "2026-03-18T20:00:00Z",
+                    "confidence": 0.6,
+                    "validUntil": "2026-03-18T23:59:59Z",
+                }
+            )
+
+    def test_suppress_rejects_kind(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "suppress",
+                    "kind": "log_next_meal",
+                    "reasonCodes": ["quiet_hours"],
+                    "confidence": 1.0,
+                    "validUntil": "2026-03-18T23:59:59Z",
+                }
+            )
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("dayKey", "2026/03/18"),
+            ("computedAt", "2026-03-18T12:00:00+00:00"),
+            ("scheduledAtUtc", "2026-03-18T18:30:00+00:00"),
+            ("validUntil", "2026-03-18T19:30:00.000Z"),
+        ],
+    )
+    def test_rejects_non_canonical_date_time_formats(
+        self,
+        field_name: str,
+        value: str,
+    ) -> None:
+        payload = {
+            "dayKey": "2026-03-18",
+            "computedAt": "2026-03-18T12:00:00Z",
+            "decision": "send",
+            "kind": "log_next_meal",
+            "reasonCodes": ["preferred_window_open"],
+            "scheduledAtUtc": "2026-03-18T18:30:00Z",
+            "confidence": 0.84,
+            "validUntil": "2026-03-18T19:30:00Z",
+        }
+        payload[field_name] = value
+
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(payload)
+
+    def test_rejects_scheduled_at_utc_earlier_than_computed_at(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "send",
+                    "kind": "log_next_meal",
+                    "reasonCodes": ["preferred_window_open"],
+                    "scheduledAtUtc": "2026-03-18T11:59:59Z",
+                    "confidence": 0.84,
+                    "validUntil": "2026-03-18T19:30:00Z",
+                }
+            )
+
+    def test_rejects_scheduled_at_utc_later_than_valid_until(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "send",
+                    "kind": "log_next_meal",
+                    "reasonCodes": ["preferred_window_open"],
+                    "scheduledAtUtc": "2026-03-18T19:30:01Z",
+                    "confidence": 0.84,
+                    "validUntil": "2026-03-18T19:30:00Z",
+                }
+            )
+
+    def test_rejects_valid_until_earlier_than_computed_at(self) -> None:
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(
+                {
+                    "dayKey": "2026-03-18",
+                    "computedAt": "2026-03-18T12:00:00Z",
+                    "decision": "noop",
+                    "reasonCodes": ["insufficient_signal"],
+                    "confidence": 0.65,
+                    "validUntil": "2026-03-18T11:59:59Z",
+                }
+            )
+
+    @pytest.mark.parametrize(
+        ("decision_type", "reason_codes"),
+        [
+            ("send", ["quiet_hours"]),
+            ("suppress", ["preferred_window_open"]),
+            ("noop", ["already_logged_recently"]),
+        ],
+    )
+    def test_rejects_reason_codes_not_allowed_for_decision(
+        self,
+        decision_type: str,
+        reason_codes: list[str],
+    ) -> None:
+        payload = {
+            "dayKey": "2026-03-18",
+            "computedAt": "2026-03-18T12:00:00Z",
+            "decision": decision_type,
+            "kind": "log_next_meal" if decision_type == "send" else None,
+            "reasonCodes": reason_codes,
+            "scheduledAtUtc": "2026-03-18T18:30:00Z" if decision_type == "send" else None,
+            "confidence": 0.84 if decision_type == "send" else 1.0,
+            "validUntil": "2026-03-18T19:30:00Z",
+        }
+
+        with pytest.raises(ValidationError):
+            ReminderDecision.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Fixture: smart_reminder_telemetry.json
+# ---------------------------------------------------------------------------
+
+
+class TestSmartReminderTelemetryContract:
+    @pytest.fixture()
+    def fixture(self) -> JSONDict:
+        return _load_fixture("smart_reminder_telemetry.json")
+
+    def test_event_names_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "smart_reminder_suppressed",
+            "smart_reminder_scheduled",
+            "smart_reminder_noop",
+            "smart_reminder_decision_failed",
+            "smart_reminder_schedule_failed",
+        }
+        assert set(fixture["eventNames"]) == expected
+        assert expected.issubset(ALLOWED_TELEMETRY_EVENT_NAMES)
+
+    def test_props_match_backend_allowlist(self, fixture: JSONDict) -> None:
+        expected = {
+            "smart_reminder_suppressed": {
+                "decision",
+                "suppressionReason",
+                "confidenceBucket",
+            },
+            "smart_reminder_scheduled": {
+                "reminderKind",
+                "decision",
+                "confidenceBucket",
+                "scheduledWindow",
+            },
+            "smart_reminder_noop": {
+                "decision",
+                "noopReason",
+                "confidenceBucket",
+            },
+            "smart_reminder_decision_failed": {
+                "failureReason",
+            },
+            "smart_reminder_schedule_failed": {
+                "reminderKind",
+                "decision",
+                "confidenceBucket",
+                "failureReason",
+            },
+        }
+        assert set(fixture["propsByEvent"].keys()) == set(expected.keys())
+        for event_name, prop_names in expected.items():
+            assert set(fixture["propsByEvent"][event_name]) == prop_names
+            assert ALLOWED_TELEMETRY_EVENT_PROPS[event_name] == frozenset(prop_names)
+
+    def test_disallowed_event_names_stay_out_of_allowlist(self, fixture: JSONDict) -> None:
+        for event_name in fixture["disallowedEventNames"]:
+            assert event_name not in ALLOWED_TELEMETRY_EVENT_NAMES
+
+
+# ---------------------------------------------------------------------------
 # Fixture: gateway_reject.json
 # ---------------------------------------------------------------------------
 
@@ -352,6 +647,19 @@ class TestEnumParity:
 
     def test_ai_tier_parity(self, enums: StringListDict) -> None:
         assert sorted(enums["AiTier"]) == sorted(["free", "premium"])
+
+    def test_reminder_decision_type_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["ReminderDecisionType"]) == sorted(
+            get_args(ReminderDecisionType)
+        )
+
+    def test_reminder_kind_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["ReminderKind"]) == sorted(get_args(ReminderKind))
+
+    def test_reminder_reason_code_parity(self, enums: StringListDict) -> None:
+        assert sorted(enums["ReminderReasonCode"]) == sorted(
+            get_args(ReminderReasonCode)
+        )
 
 
 class TestCoachContractEnums:

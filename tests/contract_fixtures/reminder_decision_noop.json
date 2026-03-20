@@ -1,0 +1,12 @@
+{
+  "dayKey": "2026-03-18",
+  "computedAt": "2026-03-18T12:00:00Z",
+  "decision": "noop",
+  "kind": null,
+  "reasonCodes": [
+    "insufficient_signal"
+  ],
+  "scheduledAtUtc": null,
+  "confidence": 0.65,
+  "validUntil": "2026-03-18T23:59:59Z"
+}

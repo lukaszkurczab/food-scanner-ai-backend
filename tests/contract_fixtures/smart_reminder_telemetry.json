@@ -1,0 +1,40 @@
+{
+  "eventNames": [
+    "smart_reminder_suppressed",
+    "smart_reminder_scheduled",
+    "smart_reminder_noop",
+    "smart_reminder_decision_failed",
+    "smart_reminder_schedule_failed"
+  ],
+  "propsByEvent": {
+    "smart_reminder_suppressed": [
+      "decision",
+      "suppressionReason",
+      "confidenceBucket"
+    ],
+    "smart_reminder_scheduled": [
+      "reminderKind",
+      "decision",
+      "confidenceBucket",
+      "scheduledWindow"
+    ],
+    "smart_reminder_noop": [
+      "decision",
+      "noopReason",
+      "confidenceBucket"
+    ],
+    "smart_reminder_decision_failed": [
+      "failureReason"
+    ],
+    "smart_reminder_schedule_failed": [
+      "reminderKind",
+      "decision",
+      "confidenceBucket",
+      "failureReason"
+    ]
+  },
+  "disallowedEventNames": [
+    "smart_reminder_decision_computed",
+    "smart_reminder_opened"
+  ]
+}

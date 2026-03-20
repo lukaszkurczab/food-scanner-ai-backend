@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     TELEMETRY_ENABLED: bool = False
     HABITS_ENABLED: bool = False
     STATE_ENABLED: bool = False
+    SMART_REMINDERS_ENABLED: bool = False
     AI_REJECT_COST: float = Field(default=0.2, ge=0.0)
     AI_LOCAL_COST: float = Field(default=0.5, ge=0.0)
     AI_GATEWAY_ML_ENABLED: bool = False
