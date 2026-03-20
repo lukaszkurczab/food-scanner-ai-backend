@@ -7,7 +7,7 @@ from typing import Any
 from app.core.datetime_utils import ensure_utc_datetime, parse_flexible_datetime
 from app.services.meal_service import list_changes, list_history
 from app.services.notification_service import list_notifications
-from app.services.reminder_decision_store import get_daily_send_count
+from app.services.reminder_decision_store import DailySendCountResult, get_daily_send_count
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.reminder_rule_engine import (
     RECENT_ACTIVITY_SUPPRESSION_MIN,
@@ -25,6 +25,7 @@ class ReminderInputs:
     preferences: ReminderPreferencesInput
     activity: ReminderActivityInput
     now_local: datetime
+    store_degraded: bool = False
 
 
 async def build_reminder_inputs(
@@ -52,7 +53,7 @@ async def build_reminder_inputs(
         client_tz_offset_min=tz_offset_min,
     )
     notification_items = await _load_notification_items(user_id=user_id)
-    daily_send_count = await get_daily_send_count(user_id, state.dayKey)
+    send_count_result = await get_daily_send_count(user_id, state.dayKey)
 
     return ReminderInputs(
         preferences=_build_preferences_input(
@@ -64,9 +65,10 @@ async def build_reminder_inputs(
             recent_meals=recent_meals,
             recent_changes=recent_changes,
             now_utc=normalized_now,
-            daily_send_count=daily_send_count,
+            daily_send_count=send_count_result.count,
         ),
         now_local=now_local,
+        store_degraded=send_count_result.degraded,
     )
 
 

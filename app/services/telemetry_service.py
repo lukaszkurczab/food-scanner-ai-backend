@@ -40,6 +40,12 @@ from app.core.exceptions import (
 from app.db.firebase import get_firestore
 from app.schemas.telemetry import (
     ALLOWED_TELEMETRY_EVENT_NAMES,
+    SMART_REMINDER_EVENT_NAMES,
+    SmartReminderDailyBucket,
+    SmartReminderKindCount,
+    SmartReminderOutcomeTotals,
+    SmartReminderReasonCount,
+    SmartReminderRolloutSummaryResponse,
     TelemetryDailySummaryBucket,
     TelemetryDailySummaryResponse,
     TelemetryBatchIngestResponse,
@@ -296,4 +302,138 @@ def get_daily_summary(
         generatedAt=_serialize_timestamp(normalized_now),
         days=days,
         buckets=summary_buckets,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Smart Reminders rollout summary
+# ---------------------------------------------------------------------------
+
+_EVENT_TO_OUTCOME_KEY: dict[str, str] = {
+    "smart_reminder_scheduled": "scheduled",
+    "smart_reminder_suppressed": "suppressed",
+    "smart_reminder_noop": "noop",
+    "smart_reminder_decision_failed": "decisionFailed",
+    "smart_reminder_schedule_failed": "scheduleFailed",
+}
+
+
+def get_smart_reminder_summary(
+    *,
+    user_id: str,
+    days: int = 7,
+    now: datetime | None = None,
+) -> SmartReminderRolloutSummaryResponse:
+    """Aggregate smart-reminder telemetry events into a rollout-oriented view.
+
+    Returns per-day outcome counts, grouped suppression/noop reasons,
+    reminder kind distribution, and an overall send ratio.
+    """
+    if not settings.TELEMETRY_ENABLED:
+        raise TelemetryDisabledError("Telemetry ingestion is disabled")
+
+    normalized_now = ensure_utc_datetime(now or utc_now())
+    start_at = normalized_now - timedelta(days=max(days - 1, 0))
+
+    collection_ref = get_firestore().collection(COLLECTION_NAME)
+    query = (
+        collection_ref.where("userHash", "==", _build_user_hash(user_id))
+        .where("ts", ">=", _serialize_timestamp(start_at))
+        .where("ts", "<=", _serialize_timestamp(normalized_now))
+    )
+
+    try:
+        snapshots = list(query.stream())
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "telemetry.smart_reminder_summary.firestore_error",
+            extra={"user_id": user_id, "days": days},
+        )
+        raise FirestoreServiceError("Failed to read smart reminder summary.") from exc
+
+    # ---- Accumulators ----
+    totals: dict[str, int] = {
+        "scheduled": 0,
+        "suppressed": 0,
+        "noop": 0,
+        "decisionFailed": 0,
+        "scheduleFailed": 0,
+    }
+    suppression_reasons: dict[str, int] = {}
+    noop_reasons: dict[str, int] = {}
+    reminder_kinds: dict[str, int] = {}
+    daily: dict[str, dict[str, int]] = {}
+
+    for snapshot in snapshots:
+        payload = dict(snapshot.to_dict() or {})
+        event_name = str(payload.get("name") or "").strip()
+        if event_name not in SMART_REMINDER_EVENT_NAMES:
+            continue
+
+        outcome_key = _EVENT_TO_OUTCOME_KEY.get(event_name)
+        if outcome_key is None:
+            continue
+
+        totals[outcome_key] = totals.get(outcome_key, 0) + 1
+
+        day = str(payload.get("ts") or "")[:10]
+        if len(day) == 10:
+            day_bucket = daily.setdefault(day, {
+                "scheduled": 0, "suppressed": 0, "noop": 0,
+                "decisionFailed": 0, "scheduleFailed": 0,
+            })
+            day_bucket[outcome_key] = day_bucket.get(outcome_key, 0) + 1
+
+        props = payload.get("props") or {}
+        if not isinstance(props, dict):
+            props = {}
+
+        if event_name == "smart_reminder_suppressed":
+            reason = props.get("suppressionReason")
+            if isinstance(reason, str) and reason:
+                suppression_reasons[reason] = suppression_reasons.get(reason, 0) + 1
+
+        elif event_name == "smart_reminder_noop":
+            reason = props.get("noopReason")
+            if isinstance(reason, str) and reason:
+                noop_reasons[reason] = noop_reasons.get(reason, 0) + 1
+
+        if event_name in ("smart_reminder_scheduled", "smart_reminder_schedule_failed"):
+            kind = props.get("reminderKind")
+            if isinstance(kind, str) and kind:
+                reminder_kinds[kind] = reminder_kinds.get(kind, 0) + 1
+
+    # ---- Send ratio ----
+    outcome_denominator = totals["scheduled"] + totals["suppressed"] + totals["noop"]
+    send_ratio: float | None = None
+    if outcome_denominator > 0:
+        send_ratio = round(totals["scheduled"] / outcome_denominator, 4)
+
+    return SmartReminderRolloutSummaryResponse(
+        generatedAt=_serialize_timestamp(normalized_now),
+        days=days,
+        totals=SmartReminderOutcomeTotals(
+            scheduled=totals["scheduled"],
+            suppressed=totals["suppressed"],
+            noop=totals["noop"],
+            decisionFailed=totals["decisionFailed"],
+            scheduleFailed=totals["scheduleFailed"],
+            sendRatio=send_ratio,
+        ),
+        suppressionReasons=[
+            SmartReminderReasonCount(reason=r, count=c)
+            for r, c in sorted(suppression_reasons.items())
+        ],
+        noopReasons=[
+            SmartReminderReasonCount(reason=r, count=c)
+            for r, c in sorted(noop_reasons.items())
+        ],
+        reminderKinds=[
+            SmartReminderKindCount(kind=k, count=c)
+            for k, c in sorted(reminder_kinds.items())
+        ],
+        dailyBuckets=[
+            SmartReminderDailyBucket(day=day, **counts)
+            for day, counts in sorted(daily.items())
+        ],
     )

@@ -72,7 +72,7 @@ def test_get_reminder_decision_returns_rule_engine_output(
         return_value=decision,
     )
     record_send = mocker.patch(
-        "app.services.reminder_service.record_send_decision",
+        "app.services.reminder_service.record_send_decision_if_new",
     )
     mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
@@ -83,7 +83,12 @@ def test_get_reminder_decision_returns_rule_engine_output(
     response = asyncio.run(get_reminder_decision("user-1", day_key="2026-03-18"))
 
     assert response == decision
-    record_send.assert_called_once_with("user-1", state.dayKey)
+    record_send.assert_called_once_with(
+        "user-1",
+        state.dayKey,
+        kind=decision.kind,
+        scheduled_at_utc=decision.scheduledAtUtc,
+    )
     get_state.assert_called_once_with("user-1", day_key="2026-03-18")
     get_prefs.assert_called_once_with("user-1")
     build_inputs.assert_called_once_with(
@@ -138,7 +143,7 @@ def test_get_reminder_decision_passes_tz_offset_min_to_input_builder(
         "app.services.reminder_service.evaluate_reminder_decision",
         return_value=decision,
     )
-    mocker.patch("app.services.reminder_service.record_send_decision")
+    mocker.patch("app.services.reminder_service.record_send_decision_if_new")
     mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
     mocker.patch(
         "app.services.reminder_service.utc_now",
@@ -278,7 +283,7 @@ def test_get_reminder_decision_wraps_contract_violation_as_contract_error(
 def test_get_reminder_decision_does_not_record_send_for_suppress(
     mocker: MockerFixture,
 ) -> None:
-    """record_send_decision must NOT be called when the decision is suppress."""
+    """record_send_decision_if_new must NOT be called when the decision is suppress."""
     state = _load_state_fixture()
     suppress_decision = ReminderDecision(
         dayKey="2026-03-18",
@@ -310,7 +315,7 @@ def test_get_reminder_decision_does_not_record_send_for_suppress(
         return_value=suppress_decision,
     )
     record_send = mocker.patch(
-        "app.services.reminder_service.record_send_decision",
+        "app.services.reminder_service.record_send_decision_if_new",
     )
     mocker.patch(
         "app.services.reminder_service.utc_now",
@@ -353,7 +358,7 @@ def test_get_reminder_decision_emits_structured_log_on_success(
         "app.services.reminder_service.evaluate_reminder_decision",
         return_value=decision,
     )
-    mocker.patch("app.services.reminder_service.record_send_decision")
+    mocker.patch("app.services.reminder_service.record_send_decision_if_new")
     mocker.patch(
         "app.services.reminder_service.utc_now",
         return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
@@ -371,3 +376,4 @@ def test_get_reminder_decision_emits_structured_log_on_success(
     assert log_record.decision == decision.decision
     assert log_record.kind == decision.kind
     assert log_record.tz_offset_min == 60
+    assert log_record.store_degraded is False

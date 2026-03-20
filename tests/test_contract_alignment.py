@@ -39,6 +39,9 @@ from app.schemas.meal import (
 )
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import (
+    NOOP_REASON_CODES,
+    SEND_REASON_CODES,
+    SUPPRESS_REASON_CODES,
     ReminderDecision,
     ReminderDecisionType,
     ReminderKind,
@@ -689,3 +692,75 @@ class TestCoachContractEnums:
         assert sorted(get_args(CoachEmptyReason)) == sorted(
             ["no_data", "insufficient_data"]
         )
+
+
+class TestSmartRemindersContractSnapshot:
+    """Validate that backend Python types match the canonical contract snapshot.
+
+    The snapshot at ``smart_reminders_v1.contract.json`` is the cross-repo
+    source of truth.  An identical copy lives in the mobile repo.  If this
+    test fails, either the snapshot is stale (re-run
+    ``scripts/export_reminder_contract.py``) or the types changed
+    intentionally and the snapshot needs to be re-exported and synced.
+    """
+
+    @pytest.fixture()
+    def contract(self) -> JSONDict:
+        return _load_fixture("smart_reminders_v1.contract.json")
+
+    def test_decision_types_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(get_args(ReminderDecisionType)) == sorted(
+            contract["decisionTypes"]
+        )
+
+    def test_reminder_kinds_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(get_args(ReminderKind)) == sorted(contract["reminderKinds"])
+
+    def test_all_reason_codes_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(get_args(ReminderReasonCode)) == sorted(
+            contract["reasonCodes"]["all"]
+        )
+
+    def test_send_reason_codes_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(SEND_REASON_CODES) == sorted(contract["reasonCodes"]["send"])
+
+    def test_suppress_reason_codes_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(SUPPRESS_REASON_CODES) == sorted(
+            contract["reasonCodes"]["suppress"]
+        )
+
+    def test_noop_reason_codes_match_snapshot(self, contract: JSONDict) -> None:
+        assert sorted(NOOP_REASON_CODES) == sorted(contract["reasonCodes"]["noop"])
+
+    def test_telemetry_allowed_events_match_snapshot(self, contract: JSONDict) -> None:
+        telemetry = _load_fixture("smart_reminder_telemetry.json")
+        assert sorted(telemetry["eventNames"]) == sorted(
+            contract["telemetry"]["allowedEvents"]
+        )
+
+    def test_telemetry_disallowed_events_match_snapshot(self, contract: JSONDict) -> None:
+        telemetry = _load_fixture("smart_reminder_telemetry.json")
+        assert sorted(telemetry["disallowedEventNames"]) == sorted(
+            contract["telemetry"]["disallowedEvents"]
+        )
+
+    def test_telemetry_props_match_snapshot(self, contract: JSONDict) -> None:
+        telemetry = _load_fixture("smart_reminder_telemetry.json")
+        for event_name, props in telemetry["propsByEvent"].items():
+            assert sorted(props) == sorted(
+                contract["telemetry"]["propsByEvent"][event_name]
+            ), f"Props mismatch for {event_name}"
+
+    def test_decision_shape_required_fields(self, contract: JSONDict) -> None:
+        schema_fields = set(ReminderDecision.model_fields.keys())
+        snapshot_fields = set(contract["decisionShape"]["requiredFields"])
+        assert schema_fields == snapshot_fields
+
+    def test_reason_code_groups_are_exhaustive(self, contract: JSONDict) -> None:
+        """send + suppress + noop reason codes must equal all reason codes."""
+        grouped = sorted(
+            contract["reasonCodes"]["send"]
+            + contract["reasonCodes"]["suppress"]
+            + contract["reasonCodes"]["noop"]
+        )
+        assert grouped == sorted(contract["reasonCodes"]["all"])

@@ -6,6 +6,7 @@ from pathlib import Path
 from pytest_mock import MockerFixture
 
 from app.schemas.nutrition_state import NutritionStateResponse
+from app.services.reminder_decision_store import DailySendCountResult
 from app.services.reminder_inputs import build_reminder_inputs
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
@@ -31,7 +32,7 @@ def test_build_reminder_inputs_uses_client_tz_offset_min_as_primary_source(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -63,7 +64,7 @@ def test_build_reminder_inputs_falls_back_to_meal_heuristic_when_no_client_offse
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -95,7 +96,7 @@ def test_build_reminder_inputs_falls_back_to_utc_when_no_offset_sources(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -123,7 +124,7 @@ def test_build_reminder_inputs_uses_negative_client_offset(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -163,7 +164,7 @@ def test_build_reminder_inputs_marks_already_logged_recently_for_recent_meal(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -201,7 +202,7 @@ def test_build_reminder_inputs_ignores_meals_outside_recent_window(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -227,7 +228,7 @@ def test_build_reminder_inputs_maps_current_preferences_and_explicit_limitations
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -286,7 +287,7 @@ def test_build_reminder_inputs_infers_local_offset_from_logged_at_local_min(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -337,7 +338,7 @@ def test_build_reminder_inputs_derives_preferred_windows_from_enabled_notificati
             },
         ],
     )
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -380,7 +381,7 @@ def test_build_reminder_inputs_uses_future_preferred_window_for_same_day(
             }
         ],
     )
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -421,7 +422,7 @@ def test_build_reminder_inputs_marks_recent_activity_for_recent_backfill_change(
         ),
     )
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=0, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -448,7 +449,7 @@ def test_build_reminder_inputs_passes_daily_send_count_from_store(
     )
     mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
     mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
-    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=5)
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=DailySendCountResult(count=5, degraded=False))
 
     inputs = asyncio.run(
         build_reminder_inputs(
@@ -460,3 +461,35 @@ def test_build_reminder_inputs_passes_daily_send_count_from_store(
     )
 
     assert inputs.activity.daily_send_count == 5
+    assert inputs.store_degraded is False
+
+
+def test_build_reminder_inputs_propagates_store_degraded_flag(
+    mocker: MockerFixture,
+) -> None:
+    """When decision store read fails, store_degraded must be True."""
+    mocker.patch(
+        "app.services.reminder_inputs.list_history",
+        side_effect=[
+            ([], None),
+            ([], None),
+        ],
+    )
+    mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
+    mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
+    mocker.patch(
+        "app.services.reminder_inputs.get_daily_send_count",
+        return_value=DailySendCountResult(count=0, degraded=True),
+    )
+
+    inputs = asyncio.run(
+        build_reminder_inputs(
+            user_id="user-1",
+            state=_load_state_fixture(),
+            raw_prefs={},
+            now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+        )
+    )
+
+    assert inputs.activity.daily_send_count == 0
+    assert inputs.store_degraded is True

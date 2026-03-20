@@ -9,6 +9,7 @@ from google.api_core.exceptions import AlreadyExists
 from pytest_mock import MockerFixture
 
 from app.api.v2.router import router as v2_router
+from app.schemas.telemetry import SMART_REMINDER_EVENT_NAMES
 from app.services import telemetry_service
 
 
@@ -972,3 +973,418 @@ def test_mixed_batch_logs_both_accepted_and_rejected(
     assert summary_records[0].accepted == 2  # type: ignore[attr-defined]
     assert summary_records[0].rejected == 1  # type: ignore[attr-defined]
     assert summary_records[0].events_total == 3  # type: ignore[attr-defined]
+
+
+# ===========================================================================
+# Smart Reminders rollout summary
+# ===========================================================================
+
+_USER_HASH_ROLLOUT = (
+    "fcdec6df4d44dbc637c7c5b58efface52a7f8a88535423430255be0bb89bedd8"  # sha256("user-123")
+)
+
+
+def _sr_event(
+    event_id: str,
+    name: str,
+    day: str = "2026-03-18",
+    props: dict[str, Any] | None = None,
+    user_hash: str = _USER_HASH_ROLLOUT,
+) -> dict[str, object]:
+    """Build a raw Firestore document for a smart-reminder event."""
+    return {
+        "eventId": event_id,
+        "name": name,
+        "ts": f"{day}T10:00:00Z",
+        "props": props or {},
+        "sessionId": "sess-sr",
+        "userHash": user_hash,
+        "platform": "ios",
+        "appVersion": "1.2.3",
+        "build": None,
+        "locale": "pl-PL",
+        "tzOffsetMin": 60,
+        "ingestedAt": f"{day}T10:00:01Z",
+    }
+
+
+def _seed_sr_events(
+    firestore_client: FakeFirestoreClient,
+    events: list[dict[str, object]],
+) -> None:
+    for event in events:
+        event_id = str(event["eventId"])
+        firestore_client.storage[event_id] = event
+
+
+# ---------------------------------------------------------------------------
+# 1. Summary returns correct aggregates for smart reminder events
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_correct_outcome_aggregates(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Outcome counts are correctly aggregated across event types."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-1", "smart_reminder_scheduled", props={
+            "reminderKind": "log_first_meal", "decision": "send",
+            "confidenceBucket": "high", "scheduledWindow": "morning",
+        }),
+        _sr_event("sr-2", "smart_reminder_scheduled", props={
+            "reminderKind": "log_next_meal", "decision": "send",
+            "confidenceBucket": "medium", "scheduledWindow": "afternoon",
+        }),
+        _sr_event("sr-3", "smart_reminder_suppressed", props={
+            "decision": "suppress", "suppressionReason": "quiet_hours",
+            "confidenceBucket": "high",
+        }),
+        _sr_event("sr-4", "smart_reminder_noop", props={
+            "decision": "noop", "noopReason": "insufficient_signal",
+            "confidenceBucket": "low",
+        }),
+        _sr_event("sr-5", "smart_reminder_decision_failed", props={
+            "failureReason": "service_unavailable",
+        }),
+        _sr_event("sr-6", "smart_reminder_schedule_failed", props={
+            "reminderKind": "complete_day", "decision": "send",
+            "confidenceBucket": "high", "failureReason": "permission_unavailable",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    totals = body["totals"]
+    assert totals["scheduled"] == 2
+    assert totals["suppressed"] == 1
+    assert totals["noop"] == 1
+    assert totals["decisionFailed"] == 1
+    assert totals["scheduleFailed"] == 1
+
+    # sendRatio = 2 / (2 + 1 + 1) = 0.5
+    assert totals["sendRatio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# 2. Suppression reasons are correctly grouped
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_groups_suppression_reasons(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Suppression reasons are counted and sorted alphabetically."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-s1", "smart_reminder_suppressed", props={
+            "decision": "suppress", "suppressionReason": "quiet_hours",
+            "confidenceBucket": "high",
+        }),
+        _sr_event("sr-s2", "smart_reminder_suppressed", props={
+            "decision": "suppress", "suppressionReason": "quiet_hours",
+            "confidenceBucket": "medium",
+        }),
+        _sr_event("sr-s3", "smart_reminder_suppressed", props={
+            "decision": "suppress", "suppressionReason": "frequency_cap_reached",
+            "confidenceBucket": "high",
+        }),
+        _sr_event("sr-s4", "smart_reminder_suppressed", props={
+            "decision": "suppress", "suppressionReason": "reminders_disabled",
+            "confidenceBucket": "low",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    reasons = response.json()["suppressionReasons"]
+
+    # Sorted alphabetically
+    assert reasons == [
+        {"reason": "frequency_cap_reached", "count": 1},
+        {"reason": "quiet_hours", "count": 2},
+        {"reason": "reminders_disabled", "count": 1},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 3. Noop reasons are correctly grouped
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_groups_noop_reasons(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Noop reasons are counted and sorted alphabetically."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-n1", "smart_reminder_noop", props={
+            "decision": "noop", "noopReason": "insufficient_signal",
+            "confidenceBucket": "low",
+        }),
+        _sr_event("sr-n2", "smart_reminder_noop", props={
+            "decision": "noop", "noopReason": "insufficient_signal",
+            "confidenceBucket": "low",
+        }),
+        _sr_event("sr-n3", "smart_reminder_noop", props={
+            "decision": "noop", "noopReason": "day_already_complete",
+            "confidenceBucket": "high",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    reasons = response.json()["noopReasons"]
+
+    assert reasons == [
+        {"reason": "day_already_complete", "count": 1},
+        {"reason": "insufficient_signal", "count": 2},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 4. Invalid / unrelated telemetry events don't break aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_ignores_unrelated_events(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Non-smart-reminder events in Firestore are silently skipped."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        # Unrelated events that must be ignored
+        _sr_event("unrel-1", "meal_added", props={"mealInputMethod": "photo"}),
+        _sr_event("unrel-2", "screen_view", props={"screen": "home"}),
+        _sr_event("unrel-3", "session_start", props={"origin": "cold"}),
+        # One real smart reminder event
+        _sr_event("sr-1", "smart_reminder_scheduled", props={
+            "reminderKind": "log_first_meal", "decision": "send",
+            "confidenceBucket": "high", "scheduledWindow": "morning",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    totals = body["totals"]
+    assert totals["scheduled"] == 1
+    assert totals["suppressed"] == 0
+    assert totals["noop"] == 0
+    assert totals["decisionFailed"] == 0
+    assert totals["scheduleFailed"] == 0
+    assert body["suppressionReasons"] == []
+    assert body["noopReasons"] == []
+
+
+# ---------------------------------------------------------------------------
+# 5. Reminder kinds are grouped from scheduled + schedule_failed
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_groups_reminder_kinds(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Reminder kind distribution includes both scheduled and schedule_failed."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-k1", "smart_reminder_scheduled", props={
+            "reminderKind": "log_first_meal", "decision": "send",
+            "confidenceBucket": "high", "scheduledWindow": "morning",
+        }),
+        _sr_event("sr-k2", "smart_reminder_scheduled", props={
+            "reminderKind": "log_first_meal", "decision": "send",
+            "confidenceBucket": "medium", "scheduledWindow": "morning",
+        }),
+        _sr_event("sr-k3", "smart_reminder_scheduled", props={
+            "reminderKind": "complete_day", "decision": "send",
+            "confidenceBucket": "high", "scheduledWindow": "evening",
+        }),
+        _sr_event("sr-k4", "smart_reminder_schedule_failed", props={
+            "reminderKind": "log_next_meal", "decision": "send",
+            "confidenceBucket": "high", "failureReason": "schedule_error",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    kinds = response.json()["reminderKinds"]
+
+    assert kinds == [
+        {"kind": "complete_day", "count": 1},
+        {"kind": "log_first_meal", "count": 2},
+        {"kind": "log_next_meal", "count": 1},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 6. Daily buckets are correctly partitioned
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_daily_buckets(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """Events are correctly bucketed by day."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-d1", "smart_reminder_scheduled", day="2026-03-17", props={
+            "reminderKind": "log_first_meal", "decision": "send",
+            "confidenceBucket": "high", "scheduledWindow": "morning",
+        }),
+        _sr_event("sr-d2", "smart_reminder_suppressed", day="2026-03-17", props={
+            "decision": "suppress", "suppressionReason": "quiet_hours",
+            "confidenceBucket": "high",
+        }),
+        _sr_event("sr-d3", "smart_reminder_scheduled", day="2026-03-18", props={
+            "reminderKind": "log_next_meal", "decision": "send",
+            "confidenceBucket": "medium", "scheduledWindow": "afternoon",
+        }),
+        _sr_event("sr-d4", "smart_reminder_noop", day="2026-03-18", props={
+            "decision": "noop", "noopReason": "insufficient_signal",
+            "confidenceBucket": "low",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    buckets = response.json()["dailyBuckets"]
+
+    assert len(buckets) == 2
+    assert buckets[0] == {
+        "day": "2026-03-17",
+        "scheduled": 1, "suppressed": 1, "noop": 0,
+        "decisionFailed": 0, "scheduleFailed": 0,
+    }
+    assert buckets[1] == {
+        "day": "2026-03-18",
+        "scheduled": 1, "suppressed": 0, "noop": 1,
+        "decisionFailed": 0, "scheduleFailed": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. Send ratio edge case — no outcomes yields null
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_send_ratio_null_when_no_outcomes(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """sendRatio is null when there are zero send/suppress/noop outcomes."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    # Only failure events — no send/suppress/noop
+    _seed_sr_events(firestore_client, [
+        _sr_event("sr-f1", "smart_reminder_decision_failed", props={
+            "failureReason": "service_unavailable",
+        }),
+    ])
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["totals"]["sendRatio"] is None
+
+
+# ---------------------------------------------------------------------------
+# 8. Empty result — no events at all
+# ---------------------------------------------------------------------------
+
+
+def test_smart_reminder_summary_empty_when_no_events(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    """An empty Firestore returns zero totals and empty lists."""
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+
+    client = create_test_client()
+    response = client.get(
+        "/api/v2/telemetry/smart-reminders/summary?days=7",
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["totals"]["scheduled"] == 0
+    assert body["totals"]["suppressed"] == 0
+    assert body["totals"]["sendRatio"] is None
+    assert body["suppressionReasons"] == []
+    assert body["noopReasons"] == []
+    assert body["reminderKinds"] == []
+    assert body["dailyBuckets"] == []

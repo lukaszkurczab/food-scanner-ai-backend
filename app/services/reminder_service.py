@@ -15,7 +15,7 @@ from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
 from app.services.notification_service import get_notification_prefs
 from app.services.nutrition_state_service import get_nutrition_state
-from app.services.reminder_decision_store import record_send_decision
+from app.services.reminder_decision_store import record_send_decision_if_new
 from app.services.reminder_inputs import build_reminder_inputs
 from app.services.reminder_rule_engine import ReminderContextInput, evaluate_reminder_decision
 
@@ -66,11 +66,17 @@ async def get_reminder_decision(
             "reason_codes": decision.reasonCodes,
             "confidence": decision.confidence,
             "tz_offset_min": tz_offset_min,
+            "store_degraded": reminder_inputs.store_degraded,
         },
     )
 
     if decision.decision == "send":
-        await record_send_decision(user_id, state.dayKey)
+        await record_send_decision_if_new(
+            user_id,
+            state.dayKey,
+            kind=decision.kind,
+            scheduled_at_utc=decision.scheduledAtUtc,
+        )
 
     return decision
 

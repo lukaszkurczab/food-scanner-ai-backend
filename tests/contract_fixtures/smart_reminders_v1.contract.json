@@ -1,0 +1,116 @@
+{
+  "_doc": "Canonical Smart Reminders v1 contract. Generated from backend Python types by scripts/export_reminder_contract.py. Both repos must keep an identical copy — any diff means contract drift.",
+  "_version": "v1",
+  "decisionTypes": [
+    "noop",
+    "send",
+    "suppress"
+  ],
+  "reminderKinds": [
+    "complete_day",
+    "log_first_meal",
+    "log_next_meal"
+  ],
+  "reasonCodes": {
+    "all": [
+      "already_logged_recently",
+      "day_already_complete",
+      "day_empty",
+      "day_partially_logged",
+      "frequency_cap_reached",
+      "habit_window_match",
+      "habit_window_today",
+      "insufficient_signal",
+      "logging_usually_happens_now",
+      "preferred_window_open",
+      "preferred_window_today",
+      "quiet_hours",
+      "recent_activity_detected",
+      "reminders_disabled"
+    ],
+    "send": [
+      "day_empty",
+      "day_partially_logged",
+      "habit_window_match",
+      "habit_window_today",
+      "logging_usually_happens_now",
+      "preferred_window_open",
+      "preferred_window_today"
+    ],
+    "suppress": [
+      "already_logged_recently",
+      "frequency_cap_reached",
+      "quiet_hours",
+      "recent_activity_detected",
+      "reminders_disabled"
+    ],
+    "noop": [
+      "day_already_complete",
+      "insufficient_signal"
+    ]
+  },
+  "decisionShape": {
+    "requiredFields": [
+      "dayKey",
+      "computedAt",
+      "decision",
+      "kind",
+      "reasonCodes",
+      "scheduledAtUtc",
+      "confidence",
+      "validUntil"
+    ],
+    "sendRequires": [
+      "kind",
+      "scheduledAtUtc"
+    ],
+    "suppressForbids": [
+      "kind",
+      "scheduledAtUtc"
+    ],
+    "noopForbids": [
+      "kind",
+      "scheduledAtUtc"
+    ]
+  },
+  "telemetry": {
+    "allowedEvents": [
+      "smart_reminder_decision_failed",
+      "smart_reminder_noop",
+      "smart_reminder_schedule_failed",
+      "smart_reminder_scheduled",
+      "smart_reminder_suppressed"
+    ],
+    "disallowedEvents": [
+      "smart_reminder_decision_computed",
+      "smart_reminder_opened"
+    ],
+    "propsByEvent": {
+      "smart_reminder_suppressed": [
+        "confidenceBucket",
+        "decision",
+        "suppressionReason"
+      ],
+      "smart_reminder_scheduled": [
+        "confidenceBucket",
+        "decision",
+        "reminderKind",
+        "scheduledWindow"
+      ],
+      "smart_reminder_noop": [
+        "confidenceBucket",
+        "decision",
+        "noopReason"
+      ],
+      "smart_reminder_decision_failed": [
+        "failureReason"
+      ],
+      "smart_reminder_schedule_failed": [
+        "confidenceBucket",
+        "decision",
+        "failureReason",
+        "reminderKind"
+      ]
+    }
+  }
+}

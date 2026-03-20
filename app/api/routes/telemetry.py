@@ -12,6 +12,7 @@ from app.core.exceptions import (
     TelemetryRateLimitError,
 )
 from app.schemas.telemetry import (
+    SmartReminderRolloutSummaryResponse,
     TelemetryBatchIngestResponse,
     TelemetryBatchRequest,
     TelemetryDailySummaryResponse,
@@ -19,6 +20,7 @@ from app.schemas.telemetry import (
 from app.services.telemetry_service import (
     TelemetryRequestContext,
     get_daily_summary,
+    get_smart_reminder_summary,
     ingest_batch,
 )
 
@@ -96,4 +98,34 @@ def get_telemetry_daily_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to read telemetry summary",
+        ) from exc
+
+
+@router.get(
+    "/telemetry/smart-reminders/summary",
+    response_model=SmartReminderRolloutSummaryResponse,
+    summary="Smart Reminders rollout summary",
+    description=(
+        "Returns an aggregated view of smart-reminder telemetry for the "
+        "authenticated user: outcome counts (send/suppress/noop/fail), "
+        "suppression and noop reason distribution, reminder kind breakdown, "
+        "and a per-day timeline.  Designed for rollout validation — not "
+        "a full BI surface."
+    ),
+)
+def get_smart_reminder_rollout_summary(
+    days: int = Query(7, ge=1, le=30),
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> SmartReminderRolloutSummaryResponse:
+    try:
+        return get_smart_reminder_summary(user_id=current_user.uid, days=days)
+    except TelemetryDisabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telemetry ingestion is disabled",
+        ) from exc
+    except FirestoreServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read smart reminder summary",
         ) from exc

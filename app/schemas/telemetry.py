@@ -315,3 +315,74 @@ class TelemetryDailySummaryResponse(BaseModel):
     generatedAt: str
     days: int = Field(ge=1, le=30)
     buckets: list[TelemetryDailySummaryBucket] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Smart Reminders rollout summary
+# ---------------------------------------------------------------------------
+
+SMART_REMINDER_EVENT_NAMES = frozenset(
+    {
+        "smart_reminder_scheduled",
+        "smart_reminder_suppressed",
+        "smart_reminder_noop",
+        "smart_reminder_decision_failed",
+        "smart_reminder_schedule_failed",
+    }
+)
+
+
+class SmartReminderOutcomeTotals(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled: int = Field(ge=0)
+    suppressed: int = Field(ge=0)
+    noop: int = Field(ge=0)
+    decisionFailed: int = Field(ge=0)
+    scheduleFailed: int = Field(ge=0)
+    sendRatio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Ratio of scheduled reminders to total outcomes "
+            "(scheduled + suppressed + noop).  null when denominator is 0."
+        ),
+    )
+
+
+class SmartReminderReasonCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+    count: int = Field(ge=0)
+
+
+class SmartReminderKindCount(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    count: int = Field(ge=0)
+
+
+class SmartReminderDailyBucket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: str
+    scheduled: int = Field(ge=0, default=0)
+    suppressed: int = Field(ge=0, default=0)
+    noop: int = Field(ge=0, default=0)
+    decisionFailed: int = Field(ge=0, default=0)
+    scheduleFailed: int = Field(ge=0, default=0)
+
+
+class SmartReminderRolloutSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generatedAt: str
+    days: int = Field(ge=1, le=30)
+    totals: SmartReminderOutcomeTotals
+    suppressionReasons: list[SmartReminderReasonCount] = Field(default_factory=list)
+    noopReasons: list[SmartReminderReasonCount] = Field(default_factory=list)
+    reminderKinds: list[SmartReminderKindCount] = Field(default_factory=list)
+    dailyBuckets: list[SmartReminderDailyBucket] = Field(default_factory=list)
