@@ -94,6 +94,7 @@ def test_get_reminder_decision_returns_rule_engine_output(
             "quietHours": {"startHour": 22, "endHour": 7},
         },
         now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+        tz_offset_min=None,
     )
     evaluate.assert_called_once()
     assert evaluate.call_args.kwargs["preferences"].reminders_enabled is False
@@ -107,6 +108,46 @@ def test_get_reminder_decision_returns_rule_engine_output(
         0,
         tzinfo=timezone(timedelta(minutes=60)),
     )
+
+
+def test_get_reminder_decision_passes_tz_offset_min_to_input_builder(
+    mocker: MockerFixture,
+) -> None:
+    state = _load_state_fixture()
+    decision = _load_decision_fixture()
+    mocker.patch(
+        "app.services.reminder_service.get_nutrition_state",
+        return_value=state,
+    )
+    mocker.patch(
+        "app.services.reminder_service.get_notification_prefs",
+        return_value={},
+    )
+    build_inputs = mocker.patch(
+        "app.services.reminder_service.build_reminder_inputs",
+        return_value=ReminderInputs(
+            preferences=ReminderPreferencesInput(reminders_enabled=True),
+            activity=ReminderActivityInput(),
+            now_local=datetime(
+                2026, 3, 18, 14, 0,
+                tzinfo=timezone(timedelta(minutes=120)),
+            ),
+        ),
+    )
+    mocker.patch(
+        "app.services.reminder_service.evaluate_reminder_decision",
+        return_value=decision,
+    )
+    mocker.patch("app.services.reminder_service.record_send_decision")
+    mocker.patch("app.services.reminder_service.settings.SMART_REMINDERS_ENABLED", True)
+    mocker.patch(
+        "app.services.reminder_service.utc_now",
+        return_value=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+    )
+
+    asyncio.run(get_reminder_decision("user-1", tz_offset_min=120))
+
+    assert build_inputs.call_args.kwargs["tz_offset_min"] == 120
 
 
 def test_get_reminder_decision_raises_when_feature_is_disabled(

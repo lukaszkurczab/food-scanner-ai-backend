@@ -16,6 +16,132 @@ def _load_state_fixture() -> NutritionStateResponse:
     return NutritionStateResponse.model_validate(payload)
 
 
+def test_build_reminder_inputs_uses_client_tz_offset_min_as_primary_source(
+    mocker: MockerFixture,
+) -> None:
+    """When client provides explicit tzOffsetMin, it takes precedence over
+    meal-derived heuristic."""
+    mocker.patch(
+        "app.services.reminder_inputs.list_history",
+        side_effect=[
+            ([], None),
+            # Latest meal has tzOffsetMin=60, but client says 120
+            ([{"tzOffsetMin": 60, "timestamp": "2026-03-17T17:00:00Z"}], None),
+        ],
+    )
+    mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
+    mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+
+    inputs = asyncio.run(
+        build_reminder_inputs(
+            user_id="user-1",
+            state=_load_state_fixture(),
+            raw_prefs={},
+            now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+            tz_offset_min=120,
+        )
+    )
+
+    # Client offset (120 min = +02:00) wins over meal offset (60 min = +01:00)
+    assert inputs.now_local == datetime(
+        2026, 3, 18, 14, 0,
+        tzinfo=timezone(timedelta(minutes=120)),
+    )
+
+
+def test_build_reminder_inputs_falls_back_to_meal_heuristic_when_no_client_offset(
+    mocker: MockerFixture,
+) -> None:
+    """When client does not provide tzOffsetMin, meal-derived offset is used."""
+    mocker.patch(
+        "app.services.reminder_inputs.list_history",
+        side_effect=[
+            ([], None),
+            ([{"tzOffsetMin": 60, "timestamp": "2026-03-17T17:00:00Z"}], None),
+        ],
+    )
+    mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
+    mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+
+    inputs = asyncio.run(
+        build_reminder_inputs(
+            user_id="user-1",
+            state=_load_state_fixture(),
+            raw_prefs={},
+            now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+            tz_offset_min=None,
+        )
+    )
+
+    # Falls back to meal-derived +01:00
+    assert inputs.now_local == datetime(
+        2026, 3, 18, 13, 0,
+        tzinfo=timezone(timedelta(minutes=60)),
+    )
+
+
+def test_build_reminder_inputs_falls_back_to_utc_when_no_offset_sources(
+    mocker: MockerFixture,
+) -> None:
+    """When neither client offset nor meal data is available, falls back to UTC."""
+    mocker.patch(
+        "app.services.reminder_inputs.list_history",
+        side_effect=[
+            ([], None),
+            ([], None),  # No latest meal
+        ],
+    )
+    mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
+    mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+
+    inputs = asyncio.run(
+        build_reminder_inputs(
+            user_id="user-1",
+            state=_load_state_fixture(),
+            raw_prefs={},
+            now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+            tz_offset_min=None,
+        )
+    )
+
+    assert inputs.now_local == datetime(2026, 3, 18, 12, 0, tzinfo=UTC)
+
+
+def test_build_reminder_inputs_uses_negative_client_offset(
+    mocker: MockerFixture,
+) -> None:
+    """Negative offsets (west of UTC) work correctly."""
+    mocker.patch(
+        "app.services.reminder_inputs.list_history",
+        side_effect=[
+            ([], None),
+            ([], None),
+        ],
+    )
+    mocker.patch("app.services.reminder_inputs.list_changes", return_value=([], None))
+    mocker.patch("app.services.reminder_inputs.list_notifications", return_value=[])
+    mocker.patch("app.services.reminder_inputs.get_daily_send_count", return_value=0)
+
+    inputs = asyncio.run(
+        build_reminder_inputs(
+            user_id="user-1",
+            state=_load_state_fixture(),
+            raw_prefs={},
+            now_utc=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+            tz_offset_min=-300,
+        )
+    )
+
+    # -300 min = -05:00 (US Eastern)
+    assert inputs.now_local == datetime(
+        2026, 3, 18, 7, 0,
+        tzinfo=timezone(timedelta(minutes=-300)),
+    )
+
+
 def test_build_reminder_inputs_marks_already_logged_recently_for_recent_meal(
     mocker: MockerFixture,
 ) -> None:

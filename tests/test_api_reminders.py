@@ -60,6 +60,89 @@ def test_get_reminder_decision_returns_backend_payload(
     }
 
 
+def test_get_reminder_decision_passes_tz_offset_min_to_service(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    mock_service = mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        return_value=_decision_payload(),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18&tzOffsetMin=120",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    mock_service.assert_called_once_with(
+        "user-1",
+        day_key="2026-03-18",
+        tz_offset_min=120,
+    )
+
+
+def test_get_reminder_decision_passes_negative_tz_offset_min(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    mock_service = mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        return_value=_decision_payload(),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18&tzOffsetMin=-300",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    mock_service.assert_called_once_with(
+        "user-1",
+        day_key="2026-03-18",
+        tz_offset_min=-300,
+    )
+
+
+def test_get_reminder_decision_passes_none_when_tz_offset_min_omitted(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    mock_service = mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        return_value=_decision_payload(),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 200
+    mock_service.assert_called_once_with(
+        "user-1",
+        day_key="2026-03-18",
+        tz_offset_min=None,
+    )
+
+
+def test_get_reminder_decision_returns_422_for_tz_offset_min_out_of_range(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    mocker.patch(
+        "app.api.routes.reminders.get_reminder_decision",
+        return_value=_decision_payload(),
+    )
+
+    response = client.get(
+        "/api/v2/users/me/reminders/decision?day=2026-03-18&tzOffsetMin=900",
+        headers=auth_headers("user-1"),
+    )
+
+    assert response.status_code == 422
+
+
 def test_get_reminder_decision_returns_400_for_invalid_day(
     mocker: MockerFixture,
     auth_headers,

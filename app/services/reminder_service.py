@@ -22,6 +22,7 @@ async def get_reminder_decision(
     user_id: str,
     *,
     day_key: str | None = None,
+    tz_offset_min: int | None = None,
 ) -> ReminderDecision:
     if not settings.SMART_REMINDERS_ENABLED:
         raise SmartRemindersDisabledError("Smart reminders are disabled")
@@ -36,6 +37,7 @@ async def get_reminder_decision(
         state=state,
         raw_prefs=raw_prefs,
         now_utc=now_utc,
+        tz_offset_min=tz_offset_min,
     )
 
     try:

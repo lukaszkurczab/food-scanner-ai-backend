@@ -33,6 +33,7 @@ async def build_reminder_inputs(
     state: NutritionStateResponse,
     raw_prefs: dict[str, Any],
     now_utc: datetime,
+    tz_offset_min: int | None = None,
 ) -> ReminderInputs:
     normalized_now = ensure_utc_datetime(now_utc)
     recent_meals = await _load_recent_meals(
@@ -45,7 +46,11 @@ async def build_reminder_inputs(
         now_utc=normalized_now,
     )
     latest_meal = await _load_latest_meal(user_id=user_id)
-    now_local = _resolve_now_local(now_utc=normalized_now, latest_meal=latest_meal)
+    now_local = _resolve_now_local(
+        now_utc=normalized_now,
+        latest_meal=latest_meal,
+        client_tz_offset_min=tz_offset_min,
+    )
     notification_items = await _load_notification_items(user_id=user_id)
     daily_send_count = await get_daily_send_count(user_id, state.dayKey)
 
@@ -339,11 +344,19 @@ def _resolve_now_local(
     *,
     now_utc: datetime,
     latest_meal: dict[str, Any] | None,
+    client_tz_offset_min: int | None = None,
 ) -> datetime:
+    # Priority 1: explicit client-provided offset (from query param)
+    if isinstance(client_tz_offset_min, int) and -840 <= client_tz_offset_min <= 840:
+        return now_utc.astimezone(timezone(timedelta(minutes=client_tz_offset_min)))
+
+    # Priority 2: heuristic from latest meal metadata
     tz_offset_min = _derive_tz_offset_min(latest_meal)
-    if tz_offset_min is None:
-        return now_utc.astimezone(UTC)
-    return now_utc.astimezone(timezone(timedelta(minutes=tz_offset_min)))
+    if tz_offset_min is not None:
+        return now_utc.astimezone(timezone(timedelta(minutes=tz_offset_min)))
+
+    # Priority 3: fallback to UTC
+    return now_utc.astimezone(UTC)
 
 
 def _derive_tz_offset_min(latest_meal: dict[str, Any] | None) -> int | None:

@@ -28,10 +28,15 @@ router = APIRouter()
 )
 async def get_user_reminder_decision_me(
     day: str | None = Query(default=None, min_length=10, max_length=10),
+    tzOffsetMin: int | None = Query(default=None, ge=-840, le=840),
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> ReminderDecision:
     try:
-        return await get_reminder_decision(current_user.uid, day_key=day)
+        return await get_reminder_decision(
+            current_user.uid,
+            day_key=day,
+            tz_offset_min=tzOffsetMin,
+        )
     except (
         StateDisabledError,
         SmartRemindersDisabledError,
