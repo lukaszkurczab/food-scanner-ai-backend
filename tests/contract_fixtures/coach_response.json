@@ -4,56 +4,39 @@
   "source": "rules",
   "insights": [
     {
-      "id": "2026-03-18-under-logging",
-      "type": "under_logging",
-      "priority": 100,
-      "title": "Your logging looks light today",
-      "body": "Log your next meal to make the rest of today easier to interpret.",
-      "actionLabel": "Log next meal",
-      "actionType": "log_next_meal",
-      "reasonCodes": [
-        "valid_logging_days_7_low",
-        "missing_nutrition_meals_today"
-      ],
-      "source": "rules",
-      "validUntil": "2026-03-18T23:59:59Z",
-      "confidence": 0.91,
-      "isPositive": false
-    },
-    {
-      "id": "2026-03-18-positive-momentum",
+      "id": "2026-03-18:positive_momentum",
       "type": "positive_momentum",
       "priority": 40,
-      "title": "Your recent consistency is helping",
-      "body": "Keep the streak going with one more complete meal log today.",
+      "title": "Recent momentum is worth protecting",
+      "body": "Keep the pattern going with one more complete log today.",
       "actionLabel": "Open chat",
       "actionType": "open_chat",
       "reasonCodes": [
-        "consistency_improving",
-        "streak_positive"
+        "streak_positive",
+        "consistency_improving"
       ],
       "source": "rules",
-      "validUntil": null,
+      "validUntil": "2026-03-18T23:59:59Z",
       "confidence": 0.74,
       "isPositive": true
     }
   ],
   "topInsight": {
-    "id": "2026-03-18-under-logging",
-    "type": "under_logging",
-    "priority": 100,
-    "title": "Your logging looks light today",
-    "body": "Log your next meal to make the rest of today easier to interpret.",
-    "actionLabel": "Log next meal",
-    "actionType": "log_next_meal",
+    "id": "2026-03-18:positive_momentum",
+    "type": "positive_momentum",
+    "priority": 40,
+    "title": "Recent momentum is worth protecting",
+    "body": "Keep the pattern going with one more complete log today.",
+    "actionLabel": "Open chat",
+    "actionType": "open_chat",
     "reasonCodes": [
-      "valid_logging_days_7_low",
-      "missing_nutrition_meals_today"
+      "streak_positive",
+      "consistency_improving"
     ],
     "source": "rules",
     "validUntil": "2026-03-18T23:59:59Z",
-    "confidence": 0.91,
-    "isPositive": false
+    "confidence": 0.74,
+    "isPositive": true
   },
   "meta": {
     "available": true,

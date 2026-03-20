@@ -19,6 +19,7 @@ from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
 from app.db.firebase import get_firestore
 from app.schemas.nutrition_state import (
     NutritionAiSummary,
+    NutritionComponentState,
     NutritionComponentStatus,
     NutritionConsumed,
     NutritionHabitsSummary,
@@ -338,9 +339,9 @@ def _default_ai_summary() -> NutritionAiSummary:
 
 def _build_state_meta(
     *,
-    habits_status: str,
-    streak_status: str,
-    ai_status: str,
+    habits_status: NutritionComponentState,
+    streak_status: NutritionComponentState,
+    ai_status: NutritionComponentState,
 ) -> NutritionStateMeta:
     return NutritionStateMeta(
         isDegraded=any(status == "error" for status in (habits_status, streak_status, ai_status)),

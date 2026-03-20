@@ -506,7 +506,7 @@ async def _execute_photo_completion(
     image_base64: str,
     *,
     lang: str,
-) -> tuple[list[dict[str, Any]], int | None]:
+) -> tuple[list[openai_service.AnalyzedIngredient], int | None]:
     completion = await openai_service.analyze_photo_completion(
         image_base64,
         lang=lang,
@@ -518,7 +518,7 @@ async def _execute_text_meal_completion(
     payload: Any,
     *,
     lang: str,
-) -> tuple[list[dict[str, Any]], int | None]:
+) -> tuple[list[openai_service.AnalyzedIngredient], int | None]:
     completion = await text_meal_service.analyze_text_meal_with_usage(
         payload,
         lang=lang,

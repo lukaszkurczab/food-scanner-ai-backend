@@ -11,13 +11,16 @@ corresponding test must break in *both* repos to prevent silent drift.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, get_args
 
 import pytest
+from pytest_mock import MockerFixture
 
 from app.schemas.coach import (
+    CoachMeta,
     CoachActionType,
     CoachEmptyReason,
     CoachInsightType,
@@ -38,6 +41,8 @@ from app.services.ai_gateway_service import (
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
 )
+from app.services.coach_rule_engine import evaluate_coach_insights, select_top_insight
+from app.services.coach_service import get_coach_response
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"
 JSONDict = dict[str, Any]
@@ -46,6 +51,26 @@ StringListDict = dict[str, list[str]]
 
 def _load_fixture(name: str) -> JSONDict:
     return json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+
+
+def _load_nutrition_state_fixture_model() -> NutritionStateResponse:
+    return NutritionStateResponse.model_validate(_load_fixture("nutrition_state.json"))
+
+
+def _build_runtime_coach_response_from_state(state: NutritionStateResponse) -> CoachResponse:
+    evaluation = evaluate_coach_insights(state)
+    return CoachResponse(
+        dayKey=state.dayKey,
+        computedAt=state.computedAt,
+        source="rules",
+        insights=evaluation.insights,
+        topInsight=select_top_insight(evaluation.insights),
+        meta=CoachMeta(
+            available=True,
+            emptyReason=evaluation.empty_reason,
+            isDegraded=state.meta.componentStatus.streak == "error",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +203,7 @@ class TestCoachResponseContract:
         assert response.dayKey == "2026-03-18"
         assert response.computedAt == "2026-03-18T12:00:00Z"
         assert response.source == "rules"
-        assert len(response.insights) == 2
+        assert len(response.insights) == 1
         assert response.meta.available is True
         assert response.meta.emptyReason is None
         assert response.meta.isDegraded is False
@@ -186,23 +211,67 @@ class TestCoachResponseContract:
     def test_top_insight_parses(self, fixture: JSONDict) -> None:
         response = CoachResponse.model_validate(fixture)
         assert response.topInsight is not None
-        assert response.topInsight.id == "2026-03-18-under-logging"
-        assert response.topInsight.type == "under_logging"
-        assert response.topInsight.actionType == "log_next_meal"
+        assert response.topInsight.id == "2026-03-18:positive_momentum"
+        assert response.topInsight.type == "positive_momentum"
+        assert response.topInsight.actionType == "open_chat"
         assert response.topInsight.reasonCodes == [
-            "valid_logging_days_7_low",
-            "missing_nutrition_meals_today",
+            "streak_positive",
+            "consistency_improving",
         ]
-        assert response.topInsight.confidence == 0.91
-        assert response.topInsight.isPositive is False
+        assert response.topInsight.validUntil == "2026-03-18T23:59:59Z"
+        assert response.topInsight.confidence == 0.74
+        assert response.topInsight.isPositive is True
 
-    def test_secondary_insight_parses(self, fixture: JSONDict) -> None:
+    def test_fixture_matches_runtime_rule_engine_output(
+        self,
+        fixture: JSONDict,
+    ) -> None:
+        state = _load_nutrition_state_fixture_model()
+        evaluation = evaluate_coach_insights(state)
+        top_insight = select_top_insight(evaluation.insights)
+
+        assert {
+            "insights": [insight.model_dump(mode="json") for insight in evaluation.insights],
+            "topInsight": (
+                top_insight.model_dump(mode="json") if top_insight is not None else None
+            ),
+            "meta": {
+                "available": True,
+                "emptyReason": evaluation.empty_reason,
+                "isDegraded": state.meta.componentStatus.streak == "error",
+            },
+        } == {
+            "insights": fixture["insights"],
+            "topInsight": fixture["topInsight"],
+            "meta": fixture["meta"],
+        }
+
+    def test_fixture_matches_runtime_coach_response_output(
+        self,
+        fixture: JSONDict,
+        mocker: MockerFixture,
+    ) -> None:
+        state = _load_nutrition_state_fixture_model()
+        mocker.patch(
+            "app.services.coach_service.get_nutrition_state",
+            return_value=state,
+        )
+
+        response = asyncio.run(get_coach_response("user-contract-1", day_key=state.dayKey))
+
+        assert response.model_dump(mode="json") == fixture
+
+    def test_runtime_helper_matches_fixture(self, fixture: JSONDict) -> None:
+        state = _load_nutrition_state_fixture_model()
+        response = _build_runtime_coach_response_from_state(state)
+
+        assert response.model_dump(mode="json") == fixture
+
+    def test_single_insight_fixture_parses(self, fixture: JSONDict) -> None:
         response = CoachResponse.model_validate(fixture)
-        secondary = response.insights[1]
-        assert secondary.type == "positive_momentum"
-        assert secondary.actionType == "open_chat"
-        assert secondary.validUntil is None
-        assert secondary.isPositive is True
+        assert response.insights == [response.topInsight]
+        assert response.insights[0].id == "2026-03-18:positive_momentum"
+        assert response.insights[0].validUntil == "2026-03-18T23:59:59Z"
 
     def test_fixture_top_level_keys_match_schema(self, fixture: JSONDict) -> None:
         expected_keys = set(CoachResponse.model_fields.keys())

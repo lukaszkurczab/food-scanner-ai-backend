@@ -116,7 +116,7 @@ Coach insight telemetry stays intentionally narrow. Do not send card `title`, `b
 | `AI_GATEWAY_ENABLED` | `true` | Enforce AI gateway rules (off-topic rejection). Set to `false` to bypass. |
 | `AI_GATEWAY_ML_ENABLED` | `false` | ML classifier for gateway. Do not enable without a trained model. |
 
-To enable a foundation surface for QA/internal, set the backend flag in `.env` or Railway, restart, then enable the paired mobile flag and rebuild the app.  See [Foundation Rollout Runbook](../docs/runbooks/foundation-rollout-runbook.md) for step-by-step.
+To enable a foundation surface for QA/internal, set the backend flag in `.env` or Railway, restart, then enable the paired mobile flag and rebuild the app. See [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) for the current rollout and rollback notes.
 
 ## Backend setup
 
@@ -131,13 +131,8 @@ Every HTTP response includes `X-Request-ID`.  Use it to correlate client failure
 
 ## Operator docs
 
-- [Foundation Contracts](../docs/contracts/foundation-contracts.md) — canonical shapes for all cross-repo contracts
-- [Foundation Rollout Runbook](../docs/runbooks/foundation-rollout-runbook.md) — enable/disable/rollback steps
-- [Foundation Observability](../docs/monitoring/foundation-observability.md) — what to monitor, suggested alerts
-- [Foundation Hardening Plan](../docs/foundation/foundation-hardening-plan.md) — completed PRs, remaining gaps, exit criteria
-- [Telemetry Taxonomy](../docs/telemetry-taxonomy.md) — event names, property rules, payload limits
-- [Foundation QA Checklist](../docs/foundation-qa-checklist.md) — automated + manual QA coverage
-- [Foundation V2 Rollout Playbook](../docs/foundation-v2-rollout-playbook.md) — original rollout strategy
+- [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
+- [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
 
 ## Required Environment Variables
 
