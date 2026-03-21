@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -61,6 +61,48 @@ def _patch_firestore(doc_mock: MagicMock):
         "app.services.reminder_decision_store.get_firestore",
         return_value=mock_client,
     ), mock_ref
+
+
+def _patch_firestore_with_transaction(doc_mock: MagicMock):
+    """Patch get_firestore for transaction-based record_send_decision_if_new.
+
+    The ``@firestore.transactional`` decorator calls the wrapped function
+    with a ``Transaction`` object.  We simulate this by:
+    1. Making ``doc_ref.get(transaction=...)`` return *doc_mock*.
+    2. Making ``client.transaction()`` return a mock transaction whose
+       context-manager and ``_begin``/``_commit`` calls are no-ops, so that
+       the ``@firestore.transactional`` decorator can drive the function.
+
+    Because ``@firestore.transactional`` is a real decorator from the SDK,
+    we need the mock transaction to look enough like a real one.  The
+    simplest approach: patch ``firestore.transactional`` itself so it just
+    calls the function once with a mock transaction.
+    """
+    mock_ref = MagicMock()
+    mock_ref.get.return_value = doc_mock
+
+    mock_transaction = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
+    mock_client.transaction.return_value = mock_transaction
+
+    def fake_transactional(func):
+        """Replace @firestore.transactional: just call func(transaction)."""
+        def wrapper(transaction):
+            return func(transaction)
+        return wrapper
+
+    patcher_firestore = patch(
+        "app.services.reminder_decision_store.get_firestore",
+        return_value=mock_client,
+    )
+    patcher_transactional = patch(
+        "app.services.reminder_decision_store.firestore.transactional",
+        side_effect=fake_transactional,
+    )
+
+    return patcher_firestore, patcher_transactional, mock_ref, mock_transaction
 
 
 # ---------------------------------------------------------------------------
@@ -133,16 +175,16 @@ def test_get_daily_send_count_emits_degraded_log_on_failure(caplog) -> None:
 
 
 # ---------------------------------------------------------------------------
-# record_send_decision_if_new — idempotency tests
+# record_send_decision_if_new — idempotency tests (transaction-based)
 # ---------------------------------------------------------------------------
 
 
 def test_first_send_increments_count() -> None:
     """First unique send opportunity for a day should increment the counter."""
     doc = _mock_doc(exists=False)
-    patcher, mock_ref = _patch_firestore(doc)
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
@@ -150,11 +192,11 @@ def test_first_send_increments_count() -> None:
         )
 
     assert result is True
-    mock_ref.set.assert_called_once()
-    call_args = mock_ref.set.call_args
-    payload = call_args[0][0]
-    assert "sendCount" in payload
-    assert "emittedDecisionKeys" in payload
+    # Transaction.set should have been called (not doc_ref.set)
+    mock_txn.set.assert_called_once()
+    payload = mock_txn.set.call_args[0][1]
+    assert payload["sendCount"] == 1
+    assert "2026-03-18:log_first_meal:2026-03-18T08:20:00Z" in payload["emittedDecisionKeys"]
 
 
 def test_duplicate_send_does_not_increment_count() -> None:
@@ -167,9 +209,9 @@ def test_duplicate_send_does_not_increment_count() -> None:
             "emittedDecisionKeys": [decision_key],
         },
     )
-    patcher, mock_ref = _patch_firestore(doc)
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
@@ -177,7 +219,7 @@ def test_duplicate_send_does_not_increment_count() -> None:
         )
 
     assert result is False
-    mock_ref.set.assert_not_called()
+    mock_txn.set.assert_not_called()
 
 
 def test_different_kind_same_day_increments_count() -> None:
@@ -190,9 +232,9 @@ def test_different_kind_same_day_increments_count() -> None:
             "emittedDecisionKeys": [existing_key],
         },
     )
-    patcher, mock_ref = _patch_firestore(doc)
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_next_meal", "2026-03-18T13:00:00Z"
@@ -200,7 +242,11 @@ def test_different_kind_same_day_increments_count() -> None:
         )
 
     assert result is True
-    mock_ref.set.assert_called_once()
+    mock_txn.set.assert_called_once()
+    payload = mock_txn.set.call_args[0][1]
+    assert payload["sendCount"] == 2
+    assert existing_key in payload["emittedDecisionKeys"]
+    assert "2026-03-18:log_next_meal:2026-03-18T13:00:00Z" in payload["emittedDecisionKeys"]
 
 
 def test_same_kind_different_scheduled_at_increments_count() -> None:
@@ -213,9 +259,9 @@ def test_same_kind_different_scheduled_at_increments_count() -> None:
             "emittedDecisionKeys": [existing_key],
         },
     )
-    patcher, mock_ref = _patch_firestore(doc)
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T09:00:00Z"
@@ -223,16 +269,18 @@ def test_same_kind_different_scheduled_at_increments_count() -> None:
         )
 
     assert result is True
-    mock_ref.set.assert_called_once()
+    mock_txn.set.assert_called_once()
+    payload = mock_txn.set.call_args[0][1]
+    assert payload["sendCount"] == 2
 
 
-def test_firestore_write_failure_returns_false_and_does_not_raise() -> None:
-    """Write failure is best-effort — must not propagate."""
+def test_firestore_transaction_failure_returns_false_and_does_not_raise() -> None:
+    """Transaction failure is best-effort — must not propagate."""
     doc = _mock_doc(exists=False)
-    patcher, mock_ref = _patch_firestore(doc)
-    mock_ref.set.side_effect = Exception("Firestore write failed")
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
+    mock_txn.set.side_effect = Exception("Firestore transaction failed")
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
@@ -242,13 +290,13 @@ def test_firestore_write_failure_returns_false_and_does_not_raise() -> None:
     assert result is False
 
 
-def test_firestore_read_failure_in_record_returns_false() -> None:
-    """If we can't read the doc to check for duplicates, fail gracefully."""
+def test_firestore_read_failure_in_transaction_returns_false() -> None:
+    """If we can't read the doc inside the transaction, fail gracefully."""
     doc = _mock_doc(exists=False)
-    patcher, mock_ref = _patch_firestore(doc)
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
     mock_ref.get.side_effect = Exception("Firestore read failed")
 
-    with patcher:
+    with p_fs, p_tx:
         result = asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
@@ -258,13 +306,13 @@ def test_firestore_read_failure_in_record_returns_false() -> None:
     assert result is False
 
 
-def test_write_failure_emits_degraded_log(caplog) -> None:
-    """Write failure must emit a structured warning with store_mode=degraded."""
+def test_transaction_failure_emits_degraded_log(caplog) -> None:
+    """Transaction failure must emit a structured warning with store_mode=degraded."""
     doc = _mock_doc(exists=False)
-    patcher, mock_ref = _patch_firestore(doc)
-    mock_ref.set.side_effect = Exception("Firestore write failed")
+    p_fs, p_tx, mock_ref, mock_txn = _patch_firestore_with_transaction(doc)
+    mock_txn.set.side_effect = Exception("Firestore transaction failed")
 
-    with patcher, caplog.at_level(logging.WARNING, logger="app.services.reminder_decision_store"):
+    with p_fs, p_tx, caplog.at_level(logging.WARNING, logger="app.services.reminder_decision_store"):
         asyncio.run(
             record_send_decision_if_new(
                 "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
@@ -275,6 +323,87 @@ def test_write_failure_emits_degraded_log(caplog) -> None:
     assert len(degraded_logs) == 1
     assert degraded_logs[0].operation == "write_decision"
     assert degraded_logs[0].store_mode == "degraded"
+
+
+# ---------------------------------------------------------------------------
+# Concurrency / race condition test
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_calls_for_same_decision_key_result_in_count_one() -> None:
+    """Simulate two parallel calls for the same decision_key.
+
+    In the old (non-transactional) implementation, both callers would read
+    an empty doc, pass the duplicate check, and each increment sendCount,
+    resulting in sendCount=2.
+
+    With the transactional approach, Firestore guarantees serialization:
+    one transaction commits first, and the second one retries, sees the
+    key already present, and returns False without writing.
+
+    We simulate this by tracking document state across two sequential
+    transaction invocations (representing what Firestore would do after
+    a contention retry).
+    """
+    decision_key = "2026-03-18:log_first_meal:2026-03-18T08:20:00Z"
+
+    # Mutable state representing the Firestore document.
+    doc_state: dict = {"exists": False, "data": {}}
+
+    def make_doc_snapshot():
+        snapshot = MagicMock()
+        snapshot.exists = doc_state["exists"]
+        snapshot.to_dict.return_value = dict(doc_state["data"])
+        return snapshot
+
+    mock_ref = MagicMock()
+    mock_ref.get.side_effect = lambda transaction=None: make_doc_snapshot()
+
+    mock_transaction = MagicMock()
+
+    def fake_set(ref, data, merge=False):
+        """Simulate Firestore commit: update the in-memory doc state."""
+        doc_state["exists"] = True
+        doc_state["data"] = dict(data)
+
+    mock_transaction.set.side_effect = fake_set
+
+    mock_client = MagicMock()
+    mock_client.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
+    mock_client.transaction.return_value = mock_transaction
+
+    def fake_transactional(func):
+        def wrapper(transaction):
+            return func(transaction)
+        return wrapper
+
+    patcher_fs = patch(
+        "app.services.reminder_decision_store.get_firestore",
+        return_value=mock_client,
+    )
+    patcher_tx = patch(
+        "app.services.reminder_decision_store.firestore.transactional",
+        side_effect=fake_transactional,
+    )
+
+    with patcher_fs, patcher_tx:
+        # First call: doc doesn't exist → should record and return True
+        result_1 = asyncio.run(
+            record_send_decision_if_new(
+                "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
+            )
+        )
+        # Second call: doc now has the key → should return False (no write)
+        result_2 = asyncio.run(
+            record_send_decision_if_new(
+                "user-1", "2026-03-18", "log_first_meal", "2026-03-18T08:20:00Z"
+            )
+        )
+
+    assert result_1 is True
+    assert result_2 is False
+    assert doc_state["data"]["sendCount"] == 1
+    assert doc_state["data"]["emittedDecisionKeys"].count(decision_key) == 1
 
 
 # ---------------------------------------------------------------------------

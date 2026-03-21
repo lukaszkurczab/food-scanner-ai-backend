@@ -133,50 +133,74 @@ async def record_send_decision_if_new(
     Returns ``True`` if this was a **new** opportunity (counter incremented),
     ``False`` if it was already known (idempotent no-op).
 
-    Best-effort: a write failure does NOT block the decision response.
+    Uses a Firestore transaction to ensure atomicity: the read that checks
+    for an existing ``decision_key`` and the conditional write happen in a
+    single atomic unit, eliminating the race condition where two concurrent
+    requests could both pass the duplicate check and both increment the
+    counter.
+
+    Best-effort: a write/transaction failure does NOT block the decision
+    response.
     """
     decision_key = build_decision_key(day_key, kind, scheduled_at_utc)
 
     try:
+        client: firestore.Client = get_firestore()
         doc_ref = _daily_stats_document(user_id, day_key)
-        doc = doc_ref.get()
+        is_new: bool = False
 
-        if doc.exists:
-            data = doc.to_dict() or {}
-            emitted_keys = data.get("emittedDecisionKeys", [])
-            if decision_key in emitted_keys:
-                logger.debug(
-                    "reminder.store.write_decision.duplicate",
-                    extra={
-                        "user_id": user_id,
-                        "day_key": day_key,
-                        "operation": "write_decision",
-                        "store_mode": "normal",
-                        "decision_key": decision_key,
-                        "duplicate": True,
-                    },
-                )
-                return False
+        @firestore.transactional
+        def _record_in_transaction(transaction: firestore.Transaction) -> bool:
+            doc = doc_ref.get(transaction=transaction)
 
-        doc_ref.set(
-            {
-                "sendCount": firestore.Increment(1),
-                "emittedDecisionKeys": firestore.ArrayUnion([decision_key]),
-            },
-            merge=True,
-        )
-        logger.debug(
-            "reminder.store.write_decision.recorded",
-            extra={
-                "user_id": user_id,
-                "day_key": day_key,
-                "operation": "write_decision",
-                "store_mode": "normal",
-                "decision_key": decision_key,
-                "duplicate": False,
-            },
-        )
-        return True
+            if doc.exists:
+                data = doc.to_dict() or {}
+                emitted_keys = data.get("emittedDecisionKeys", [])
+                if decision_key in emitted_keys:
+                    return False
+                new_count = int(data.get("sendCount", 0)) + 1
+            else:
+                emitted_keys = []
+                new_count = 1
+
+            transaction.set(
+                doc_ref,
+                {
+                    "sendCount": new_count,
+                    "emittedDecisionKeys": emitted_keys + [decision_key],
+                },
+                merge=True,
+            )
+            return True
+
+        is_new = _record_in_transaction(client.transaction())
+
+        if is_new:
+            logger.debug(
+                "reminder.store.write_decision.recorded",
+                extra={
+                    "user_id": user_id,
+                    "day_key": day_key,
+                    "operation": "write_decision",
+                    "store_mode": "normal",
+                    "decision_key": decision_key,
+                    "duplicate": False,
+                },
+            )
+        else:
+            logger.debug(
+                "reminder.store.write_decision.duplicate",
+                extra={
+                    "user_id": user_id,
+                    "day_key": day_key,
+                    "operation": "write_decision",
+                    "store_mode": "normal",
+                    "decision_key": decision_key,
+                    "duplicate": True,
+                },
+            )
+
+        return is_new
 
     except (GoogleAPICallError, Exception):
         logger.warning(

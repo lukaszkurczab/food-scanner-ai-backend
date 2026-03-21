@@ -694,6 +694,34 @@ class TestCoachContractEnums:
         )
 
 
+class TestSmartRemindersContractSnapshotFreshness:
+    """Guarantee that the committed snapshot is never stale.
+
+    Re-generates the contract in-memory from the current Python types and
+    asserts it matches the committed JSON byte-for-byte.  If this test
+    fails, run ``python scripts/export_reminder_contract.py`` and commit
+    the updated snapshot.
+
+    This is the canonical freshness gate: backend CI will reject any PR
+    where Python types changed but the snapshot was not re-exported.
+    """
+
+    def test_committed_snapshot_matches_regenerated_contract(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(FIXTURES_DIR.parent.parent / "scripts"))
+        from export_reminder_contract import build_contract
+
+        expected = json.dumps(build_contract(), indent=2, ensure_ascii=False) + "\n"
+        committed = (FIXTURES_DIR / "smart_reminders_v1.contract.json").read_text(
+            encoding="utf-8"
+        )
+        assert committed == expected, (
+            "Committed smart_reminders_v1.contract.json is stale. "
+            "Run: python scripts/export_reminder_contract.py"
+        )
+
+
 class TestSmartRemindersContractSnapshot:
     """Validate that backend Python types match the canonical contract snapshot.
 
