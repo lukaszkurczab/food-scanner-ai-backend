@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from math import ceil
-from typing import Iterable
+from typing import Iterable, Literal
 
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision, ReminderReasonCode
@@ -14,6 +14,9 @@ COMPLETE_DAY_WINDOW_RADIUS_MIN = 120
 RECENT_ACTIVITY_SUPPRESSION_MIN = 90
 LATEST_COMPLETE_DAY_START_MIN = 18 * 60
 DAILY_REMINDER_CAP = 3
+ANCHOR_PROXIMITY_MIN = 20
+STRONG_HABIT_OBSERVED_DAYS = 7
+COMPLETE_DAY_BUFFER_MIN = 30
 
 REASON_CODE_ORDER: tuple[ReminderReasonCode, ...] = (
     "reminders_disabled",
@@ -73,10 +76,16 @@ class _WindowEvaluation:
     valid_until_local: datetime
 
 
+_CandidateSource = Literal["preferred", "habit"]
+
+
 @dataclass(frozen=True)
-class _ScheduledCandidate:
+class _TimingCandidate:
+    source: _CandidateSource
     scheduled_at_local: datetime
     valid_until_local: datetime
+    anchor_min: int
+    is_immediate: bool
     reason_codes: list[ReminderReasonCode]
 
 
@@ -188,6 +197,7 @@ def _evaluate_first_meal_decision(
         habit_minutes=_candidate_habit_minutes(state, "log_first_meal"),
         radius_min=FIRST_MEAL_WINDOW_RADIUS_MIN,
         day_reason="day_empty",
+        observed_days=state.habits.behavior.timingPatterns14.observedDays,
     )
     if window_evaluation is None:
         return ReminderDecision(
@@ -229,6 +239,7 @@ def _evaluate_next_meal_decision(
         habit_minutes=_candidate_habit_minutes(state, "log_next_meal"),
         radius_min=NEXT_MEAL_WINDOW_RADIUS_MIN,
         day_reason="day_partially_logged",
+        observed_days=state.habits.behavior.timingPatterns14.observedDays,
     )
     if window_evaluation is None:
         return None
@@ -256,6 +267,9 @@ def _evaluate_complete_day_decision(
     if not _has_reasonable_complete_day_pattern(state):
         return None
 
+    if state.quality.mealsLogged < _minimum_complete_day_meals(state):
+        return None
+
     window_evaluation = _evaluate_window_plan(
         now_local=now_local,
         current_min=current_min,
@@ -263,6 +277,7 @@ def _evaluate_complete_day_decision(
         habit_minutes=_candidate_habit_minutes(state, "complete_day"),
         radius_min=COMPLETE_DAY_WINDOW_RADIUS_MIN,
         day_reason="day_partially_logged",
+        observed_days=state.habits.behavior.timingPatterns14.observedDays,
     )
     if window_evaluation is None:
         return None
@@ -331,8 +346,38 @@ def _evaluate_window_plan(
     habit_minutes: Iterable[int | None],
     radius_min: int,
     day_reason: ReminderReasonCode,
+    observed_days: int,
 ) -> _WindowEvaluation | None:
-    candidates: list[_ScheduledCandidate] = []
+    candidates = _collect_timing_candidates(
+        now_local=now_local,
+        current_min=current_min,
+        preferred_window=preferred_window,
+        habit_minutes=habit_minutes,
+        radius_min=radius_min,
+        day_reason=day_reason,
+    )
+    if not candidates:
+        return None
+    return _resolve_timing_plan(
+        candidates=candidates,
+        current_min=current_min,
+        now_local=now_local,
+        preferred_window=preferred_window,
+        observed_days=observed_days,
+        day_reason=day_reason,
+    )
+
+
+def _collect_timing_candidates(
+    *,
+    now_local: datetime,
+    current_min: int,
+    preferred_window: ReminderWindow | None,
+    habit_minutes: Iterable[int | None],
+    radius_min: int,
+    day_reason: ReminderReasonCode,
+) -> list[_TimingCandidate]:
+    candidates: list[_TimingCandidate] = []
 
     preferred_candidate = _candidate_from_preferred_window(
         now_local=now_local,
@@ -356,26 +401,165 @@ def _evaluate_window_plan(
         if candidate is not None:
             candidates.append(candidate)
 
-    if not candidates:
+    return candidates
+
+
+def _resolve_timing_plan(
+    *,
+    candidates: list[_TimingCandidate],
+    current_min: int,
+    now_local: datetime,
+    preferred_window: ReminderWindow | None,
+    observed_days: int,
+    day_reason: ReminderReasonCode,
+) -> _WindowEvaluation:
+    """Select the best timing from viable candidates.
+
+    Applies overlap resolution, send-now-vs-defer heuristics,
+    and habit signal weighting to choose the optimal schedule.
+    """
+    preferred_list = [c for c in candidates if c.source == "preferred"]
+    habit_list = [c for c in candidates if c.source == "habit"]
+
+    best_pref = preferred_list[0] if preferred_list else None
+
+    # Bound habit anchors by preference window when a preference exists
+    if best_pref is not None and preferred_window is not None:
+        habit_list = [
+            h for h in habit_list
+            if _is_minute_in_window(h.anchor_min, preferred_window)
+        ]
+
+    best_habit = _select_best_habit(habit_list, current_min)
+
+    # Preference-only path
+    if best_habit is None:
+        if best_pref is not None:
+            return _candidate_to_evaluation(best_pref)
+        return _fallback_earliest_evaluation(candidates)
+
+    # Habit-only path (no preference window configured)
+    if best_pref is None:
+        return _candidate_to_evaluation(best_habit)
+
+    # Overlap: both preferred and habit exist
+    strong_signal = observed_days >= STRONG_HABIT_OBSERVED_DAYS
+
+    if best_pref.is_immediate:
+        # Preferred window is open now
+        if best_habit.is_immediate:
+            # Inside both windows → send now
+            return _merge_candidates_evaluation(best_pref, best_habit)
+
+        # Habit anchor is in the future within preferred bounds
+        distance = best_habit.anchor_min - current_min
+        if distance <= ANCHOR_PROXIMITY_MIN:
+            return _merge_candidates_evaluation(best_pref, best_habit)
+
+        if strong_signal:
+            # Strong habit + far from anchor → defer to anchor
+            return _deferred_anchor_evaluation(
+                now_local=now_local,
+                anchor_min=best_habit.anchor_min,
+                pref=best_pref,
+                habit=best_habit,
+                day_reason=day_reason,
+            )
+
+        # Weak signal → trust preference, send now
+        return _candidate_to_evaluation(best_pref)
+
+    # Preferred window not yet open
+    if strong_signal:
+        pref_start_min = _minute_of_day(best_pref.scheduled_at_local)
+        if best_habit.anchor_min > pref_start_min:
+            # Defer to habit anchor (later than preferred start, within bounds)
+            return _deferred_anchor_evaluation(
+                now_local=now_local,
+                anchor_min=best_habit.anchor_min,
+                pref=best_pref,
+                habit=best_habit,
+                day_reason=day_reason,
+            )
+
+    # Weak signal or habit anchor at/before preferred start → preferred start
+    return _candidate_to_evaluation(best_pref)
+
+
+def _select_best_habit(
+    habits: list[_TimingCandidate], current_min: int
+) -> _TimingCandidate | None:
+    """Pick the most relevant habit candidate.
+
+    Prefers immediate candidates (currently in a habit window) with the
+    anchor closest to *current_min*.  Falls back to the earliest future
+    deferred candidate.
+    """
+    if not habits:
         return None
+    immediate = [h for h in habits if h.is_immediate]
+    if immediate:
+        return min(immediate, key=lambda h: abs(h.anchor_min - current_min))
+    return min(habits, key=lambda h: h.anchor_min)
 
-    earliest_schedule = min(candidate.scheduled_at_local for candidate in candidates)
-    active_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate.scheduled_at_local == earliest_schedule
-    ]
 
+def _candidate_to_evaluation(c: _TimingCandidate) -> _WindowEvaluation:
+    return _WindowEvaluation(
+        reason_codes=_ordered_reason_codes(c.reason_codes),
+        scheduled_at_local=c.scheduled_at_local,
+        valid_until_local=c.valid_until_local,
+    )
+
+
+def _merge_candidates_evaluation(
+    pref: _TimingCandidate, habit: _TimingCandidate
+) -> _WindowEvaluation:
+    merged = list(pref.reason_codes) + list(habit.reason_codes)
+    return _WindowEvaluation(
+        reason_codes=_ordered_reason_codes(merged),
+        scheduled_at_local=min(pref.scheduled_at_local, habit.scheduled_at_local),
+        valid_until_local=min(pref.valid_until_local, habit.valid_until_local),
+    )
+
+
+def _deferred_anchor_evaluation(
+    *,
+    now_local: datetime,
+    anchor_min: int,
+    pref: _TimingCandidate,
+    habit: _TimingCandidate,
+    day_reason: ReminderReasonCode,
+) -> _WindowEvaluation:
+    anchor_hour, anchor_minute = divmod(anchor_min, 60)
+    deferred_at = datetime.combine(
+        now_local.date(),
+        time(anchor_hour, anchor_minute, 0),
+        tzinfo=now_local.tzinfo,
+    )
+    pref_reason: ReminderReasonCode = (
+        "preferred_window_open" if pref.is_immediate else "preferred_window_today"
+    )
+    return _WindowEvaluation(
+        reason_codes=_ordered_reason_codes(
+            [day_reason, pref_reason, "habit_window_today"]
+        ),
+        scheduled_at_local=deferred_at,
+        valid_until_local=min(pref.valid_until_local, habit.valid_until_local),
+    )
+
+
+def _fallback_earliest_evaluation(
+    candidates: list[_TimingCandidate],
+) -> _WindowEvaluation:
+    earliest = min(c.scheduled_at_local for c in candidates)
+    active = [c for c in candidates if c.scheduled_at_local == earliest]
     reason_codes: list[ReminderReasonCode] = []
-    for candidate in active_candidates:
-        reason_codes.extend(candidate.reason_codes)
-
+    for c in active:
+        reason_codes.extend(c.reason_codes)
     return _WindowEvaluation(
         reason_codes=_ordered_reason_codes(reason_codes),
-        scheduled_at_local=earliest_schedule,
-        valid_until_local=min(
-            candidate.valid_until_local for candidate in active_candidates
-        ),
+        scheduled_at_local=earliest,
+        valid_until_local=min(c.valid_until_local for c in active),
     )
 
 
@@ -385,7 +569,7 @@ def _candidate_from_preferred_window(
     current_min: int,
     preferred_window: ReminderWindow | None,
     day_reason: ReminderReasonCode,
-) -> _ScheduledCandidate | None:
+) -> _TimingCandidate | None:
     if preferred_window is None:
         return None
 
@@ -393,18 +577,26 @@ def _candidate_from_preferred_window(
     if now_local > window_end:
         return None
 
+    center_min = (preferred_window.start_min + preferred_window.end_min) // 2
+
     if _is_minute_in_window(current_min, preferred_window):
-        return _ScheduledCandidate(
+        return _TimingCandidate(
+            source="preferred",
             scheduled_at_local=now_local,
             valid_until_local=window_end,
+            anchor_min=center_min,
+            is_immediate=True,
             reason_codes=[day_reason, "preferred_window_open"],
         )
 
     window_start = _window_start_datetime(now_local, preferred_window)
     if now_local < window_start:
-        return _ScheduledCandidate(
+        return _TimingCandidate(
+            source="preferred",
             scheduled_at_local=window_start,
             valid_until_local=window_end,
+            anchor_min=center_min,
+            is_immediate=False,
             reason_codes=[day_reason, "preferred_window_today"],
         )
 
@@ -418,7 +610,7 @@ def _candidate_from_habit_window(
     center_min: int,
     radius_min: int,
     day_reason: ReminderReasonCode,
-) -> _ScheduledCandidate | None:
+) -> _TimingCandidate | None:
     window_end = _center_window_end_datetime(
         now_local=now_local,
         center_min=center_min,
@@ -428,9 +620,12 @@ def _candidate_from_habit_window(
         return None
 
     if _is_within_center_window(current_min, center_min, radius_min):
-        return _ScheduledCandidate(
+        return _TimingCandidate(
+            source="habit",
             scheduled_at_local=now_local,
             valid_until_local=window_end,
+            anchor_min=center_min,
+            is_immediate=True,
             reason_codes=[day_reason, "habit_window_match", "logging_usually_happens_now"],
         )
 
@@ -440,9 +635,12 @@ def _candidate_from_habit_window(
         radius_min=radius_min,
     )
     if now_local < window_start:
-        return _ScheduledCandidate(
+        return _TimingCandidate(
+            source="habit",
             scheduled_at_local=window_start,
             valid_until_local=window_end,
+            anchor_min=center_min,
+            is_immediate=False,
             reason_codes=[day_reason, "habit_window_today"],
         )
 
@@ -476,7 +674,7 @@ def _has_reasonable_complete_day_pattern(state: NutritionStateResponse) -> bool:
         behavior.validLoggingConsistency28 >= 0.35
         and behavior.dayCoverage14.validLoggedDays >= 2
         and timing.available
-        and timing.observedDays >= 2
+        and timing.observedDays >= 4
         and timing.lastMealMedianHour is not None
     )
 
@@ -520,7 +718,14 @@ def _complete_day_anchor_min(state: NutritionStateResponse) -> int:
     timing = state.habits.behavior.timingPatterns14
     if timing.lastMealMedianHour is None:
         return LATEST_COMPLETE_DAY_START_MIN
-    return max(LATEST_COMPLETE_DAY_START_MIN, int(timing.lastMealMedianHour * 60) - 60)
+    return max(
+        LATEST_COMPLETE_DAY_START_MIN,
+        int(timing.lastMealMedianHour * 60) + COMPLETE_DAY_BUFFER_MIN,
+    )
+
+
+def _minimum_complete_day_meals(state: NutritionStateResponse) -> int:
+    return max(1, _expected_complete_meals(state) - 1)
 
 
 def _candidate_habit_minutes(
@@ -538,7 +743,10 @@ def _candidate_habit_minutes(
             _hour_to_minute(timing.snackMedianHour),
             _hour_to_minute(timing.lastMealMedianHour),
         )
-    return (_hour_to_minute(timing.lastMealMedianHour),)
+    last_meal_min = _hour_to_minute(timing.lastMealMedianHour)
+    if last_meal_min is None:
+        return (None,)
+    return (last_meal_min + COMPLETE_DAY_BUFFER_MIN,)
 
 
 def _hour_to_minute(value: float | None) -> int | None:

@@ -446,3 +446,330 @@ def test_canonical_utc_timestamps_strip_microseconds_for_noop() -> None:
     assert "." not in decision.computedAt
     assert len(decision.validUntil) == 20
     assert "." not in decision.validUntil
+
+
+# ---------------------------------------------------------------------------
+# Smarter Timing v1.5 — send-now vs defer heuristics
+# ---------------------------------------------------------------------------
+
+
+def test_defer_when_preferred_open_but_far_from_habit_anchor() -> None:
+    """Strong habit signal + far from anchor → defer to habit anchor inside
+    the preferred window instead of sending immediately."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # observedDays=8 from fixture → strong signal
+    # firstMealMedianHour=8.25 → anchor at 495 min (8:15)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # Wide window 6:00–11:00 that contains the habit anchor
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        # 6:20 = 380 min — inside preferred window but before habit window (405–585)
+        context=_context(6, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    # Deferred to habit anchor 8:15, NOT immediate at 6:20
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+    assert "habit_window_today" in decision.reasonCodes
+
+
+def test_send_now_when_preferred_open_and_near_habit_anchor() -> None:
+    """When current time is inside both preferred and habit windows,
+    send immediately with merged reason codes."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # anchor at 495 min (8:15), habit window 405–585
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        # 8:10 = 490 min — inside both windows, 5 min from anchor
+        context=_context(8, 10),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T08:10:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+    assert "habit_window_match" in decision.reasonCodes
+    assert "logging_usually_happens_now" in decision.reasonCodes
+
+
+def test_wide_preference_defers_to_habit_anchor() -> None:
+    """Very wide preferred window + strong habit → schedule at habit anchor,
+    not at current time despite window being open."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # anchor at 495 (8:15)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # Ultra-wide window 5:00–12:00
+            first_meal_window=ReminderWindow(start_min=300, end_min=720)
+        ),
+        activity=ReminderActivityInput(),
+        # 5:30 = 330 min — far from anchor (165 min)
+        context=_context(5, 30),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+    assert "habit_window_today" in decision.reasonCodes
+
+
+def test_habit_outside_preference_bounds_not_used() -> None:
+    """When habit anchor falls outside preference window bounds,
+    it must not influence timing — preference-only path applies."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # firstMealMedianHour=8.25 → anchor 495 — outside 600–720
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # 10:00–12:00 — habit anchor at 8:15 is outside
+            first_meal_window=ReminderWindow(start_min=600, end_min=720)
+        ),
+        activity=ReminderActivityInput(),
+        # 7:30 = 450 — before preferred window, inside habit window (405–585)
+        context=_context(7, 30),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    # Deferred to preferred window start, habit is bounded out
+    assert decision.scheduledAtUtc == "2026-03-18T10:00:00Z"
+    assert "preferred_window_today" in decision.reasonCodes
+    assert "habit_window_match" not in decision.reasonCodes
+    assert "logging_usually_happens_now" not in decision.reasonCodes
+
+
+def test_weak_habit_signal_prefers_preference_timing() -> None:
+    """With few observed days, the engine should trust preference timing
+    and send immediately when the window is open — not defer to habit."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.timingPatterns14.observedDays = 4  # weak (<7)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        # 6:20 = 380 — same scenario as defer test, but weak signal
+        context=_context(6, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    # Weak signal → send now, not deferred to anchor
+    assert decision.scheduledAtUtc == "2026-03-18T06:20:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+
+
+def test_deferred_preference_shifts_to_habit_anchor() -> None:
+    """When the preferred window hasn't opened yet but a strong habit anchor
+    falls INSIDE the window and later than window start, schedule at the
+    habit anchor instead of the window start."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # firstMealMedianHour=8.25 → anchor 495 (8:15)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # 8:00–10:00 — habit anchor 8:15 is inside, later than start
+            first_meal_window=ReminderWindow(start_min=480, end_min=600)
+        ),
+        activity=ReminderActivityInput(),
+        # 7:30 = 450 — before preferred window
+        context=_context(7, 30),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    # Deferred to habit anchor 8:15, NOT preferred start 8:00
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert "preferred_window_today" in decision.reasonCodes
+    assert "habit_window_today" in decision.reasonCodes
+
+
+def test_next_meal_defers_to_habit_with_preference_window() -> None:
+    """Smarter timing heuristics apply to log_next_meal the same way they
+    do for log_first_meal — verify defer works for partially logged day."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+    # lunchMedianHour=13.0 → anchor 780 (13:00)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # Wide window 11:00–15:00 containing lunch anchor
+            next_meal_window=ReminderWindow(start_min=660, end_min=900)
+        ),
+        activity=ReminderActivityInput(),
+        # 11:20 = 680 — in preferred window, before habit window (690–870)
+        context=_context(11, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    # Deferred to lunch anchor 13:00, NOT immediate at 11:20
+    assert decision.scheduledAtUtc == "2026-03-18T13:00:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+    assert "habit_window_today" in decision.reasonCodes
+
+
+def test_observed_days_at_strong_threshold_defers() -> None:
+    """observedDays=7 is the exact boundary for strong signal.
+    At this threshold, defer should still apply."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.timingPatterns14.observedDays = 7  # exact boundary
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(6, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    # Strong signal at boundary → defer to anchor 8:15
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert "habit_window_today" in decision.reasonCodes
+
+
+# ---------------------------------------------------------------------------
+# Smarter Timing v1.5 — complete_day refinement
+# ---------------------------------------------------------------------------
+
+
+def test_complete_day_not_scheduled_before_buffer() -> None:
+    """complete_day must not fire before lastMealMedianHour + buffer.
+    At 19:00 (= lastMealMedian), the day likely still has an ongoing meal.
+    Should fall through to log_next_meal instead."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1260)
+        ),
+        activity=ReminderActivityInput(),
+        # 19:00 = 1140 — at lastMealMedian, before buffer (1170)
+        context=_context(19, 0),
+    )
+
+    assert decision.kind != "complete_day"
+
+
+def test_complete_day_sends_after_buffer() -> None:
+    """Once past lastMealMedian + buffer, complete_day should fire normally."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1320)
+        ),
+        activity=ReminderActivityInput(),
+        # 19:45 = 1185 — past buffer (1170)
+        context=_context(19, 45),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "complete_day"
+
+
+def test_complete_day_weak_signal_no_send() -> None:
+    """With too few observed days, the lastMealMedianHour is unreliable.
+    complete_day should not be sent."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+    state.habits.behavior.timingPatterns14.observedDays = 3  # below threshold (4)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1260)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(20, 0),
+    )
+
+    assert decision.kind != "complete_day"
+
+
+def test_complete_day_respects_preference_bounds() -> None:
+    """When the preference window starts later than the habit anchor,
+    complete_day must defer to the preference window start."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # Preference window starts at 20:30 — after habit anchor (19:30)
+            complete_day_window=ReminderWindow(start_min=1230, end_min=1350)
+        ),
+        activity=ReminderActivityInput(),
+        # 19:45 = 1185 — past buffer, but before preference window
+        context=_context(19, 45),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "complete_day"
+    assert decision.scheduledAtUtc == "2026-03-18T20:30:00Z"
+    assert "preferred_window_today" in decision.reasonCodes
+
+
+def test_complete_day_not_sent_with_too_few_meals() -> None:
+    """With only 1 meal logged out of expected 3, the day is still in progress.
+    Should get log_next_meal instead of complete_day."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 0.5
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1260)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(20, 0),
+    )
+
+    # Only 1 of 3 expected meals → not complete_day territory
+    assert decision.kind != "complete_day"
