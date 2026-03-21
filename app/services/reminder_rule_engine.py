@@ -14,7 +14,7 @@ COMPLETE_DAY_WINDOW_RADIUS_MIN = 120
 RECENT_ACTIVITY_SUPPRESSION_MIN = 90
 LATEST_COMPLETE_DAY_START_MIN = 18 * 60
 DAILY_REMINDER_CAP = 3
-ANCHOR_PROXIMITY_MIN = 20
+ANCHOR_PROXIMITY_MIN = 30
 STRONG_HABIT_OBSERVED_DAYS = 7
 COMPLETE_DAY_BUFFER_MIN = 30
 
@@ -198,6 +198,7 @@ def _evaluate_first_meal_decision(
         radius_min=FIRST_MEAL_WINDOW_RADIUS_MIN,
         day_reason="day_empty",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
+        quiet_hours=preferences.quiet_hours,
     )
     if window_evaluation is None:
         return ReminderDecision(
@@ -240,6 +241,7 @@ def _evaluate_next_meal_decision(
         radius_min=NEXT_MEAL_WINDOW_RADIUS_MIN,
         day_reason="day_partially_logged",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
+        quiet_hours=preferences.quiet_hours,
     )
     if window_evaluation is None:
         return None
@@ -278,6 +280,7 @@ def _evaluate_complete_day_decision(
         radius_min=COMPLETE_DAY_WINDOW_RADIUS_MIN,
         day_reason="day_partially_logged",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
+        quiet_hours=preferences.quiet_hours,
     )
     if window_evaluation is None:
         return None
@@ -347,6 +350,7 @@ def _evaluate_window_plan(
     radius_min: int,
     day_reason: ReminderReasonCode,
     observed_days: int,
+    quiet_hours: ReminderQuietHours | None = None,
 ) -> _WindowEvaluation | None:
     candidates = _collect_timing_candidates(
         now_local=now_local,
@@ -358,7 +362,15 @@ def _evaluate_window_plan(
     )
     if not candidates:
         return None
-    return _resolve_timing_plan(
+
+    # Hard bound: if preference window exists but has passed, do not send.
+    # Habit candidates alone must not bypass the user's preferred timing.
+    if preferred_window is not None:
+        has_preferred = any(c.source == "preferred" for c in candidates)
+        if not has_preferred:
+            return None
+
+    evaluation = _resolve_timing_plan(
         candidates=candidates,
         current_min=current_min,
         now_local=now_local,
@@ -366,6 +378,14 @@ def _evaluate_window_plan(
         observed_days=observed_days,
         day_reason=day_reason,
     )
+
+    # Revalidate: deferred schedule must not land in quiet hours.
+    # The suppression gate only checks current time; a deferred anchor
+    # may fall into a future quiet-hours window.
+    if not _is_schedule_quiet_hours_safe(evaluation.scheduled_at_local, quiet_hours):
+        return None
+
+    return evaluation
 
 
 def _collect_timing_candidates(
@@ -423,8 +443,11 @@ def _resolve_timing_plan(
 
     best_pref = preferred_list[0] if preferred_list else None
 
-    # Bound habit anchors by preference window when a preference exists
-    if best_pref is not None and preferred_window is not None:
+    # Bound habit anchors within the preference window.  The upstream
+    # _evaluate_window_plan guarantees that a preferred candidate exists
+    # whenever preferred_window is configured (it returns None otherwise),
+    # so this guard is always a real bound.
+    if preferred_window is not None:
         habit_list = [
             h for h in habit_list
             if _is_minute_in_window(h.anchor_min, preferred_window)
@@ -432,11 +455,13 @@ def _resolve_timing_plan(
 
     best_habit = _select_best_habit(habit_list, current_min)
 
-    # Preference-only path
+    # Preference-only: all habit candidates bounded out or absent.
+    # When preferred_list is empty bounding is skipped, so habit_list keeps
+    # every candidate and _select_best_habit always returns one — meaning
+    # best_pref is guaranteed non-None on this path.
     if best_habit is None:
-        if best_pref is not None:
-            return _candidate_to_evaluation(best_pref)
-        return _fallback_earliest_evaluation(candidates)
+        assert best_pref is not None
+        return _candidate_to_evaluation(best_pref)
 
     # Habit-only path (no preference window configured)
     if best_pref is None:
@@ -448,16 +473,17 @@ def _resolve_timing_plan(
     if best_pref.is_immediate:
         # Preferred window is open now
         if best_habit.is_immediate:
-            # Inside both windows → send now
+            # Close to anchor inside both windows → send now with merged reasons.
+            # _candidate_from_habit_window guarantees is_immediate only when the
+            # user is within ANCHOR_PROXIMITY_MIN of the habit anchor, so this
+            # merge always represents a genuine overlap.
             return _merge_candidates_evaluation(best_pref, best_habit)
 
-        # Habit anchor is in the future within preferred bounds
-        distance = best_habit.anchor_min - current_min
-        if distance <= ANCHOR_PROXIMITY_MIN:
-            return _merge_candidates_evaluation(best_pref, best_habit)
-
+        # Habit is deferred: anchor is meaningfully in the future.
+        # _candidate_from_habit_window already enforces the proximity threshold
+        # for immediacy, so every non-immediate habit is far enough to warrant
+        # a defer-vs-send-now decision based on signal strength.
         if strong_signal:
-            # Strong habit + far from anchor → defer to anchor
             return _deferred_anchor_evaluation(
                 now_local=now_local,
                 anchor_min=best_habit.anchor_min,
@@ -548,21 +574,6 @@ def _deferred_anchor_evaluation(
     )
 
 
-def _fallback_earliest_evaluation(
-    candidates: list[_TimingCandidate],
-) -> _WindowEvaluation:
-    earliest = min(c.scheduled_at_local for c in candidates)
-    active = [c for c in candidates if c.scheduled_at_local == earliest]
-    reason_codes: list[ReminderReasonCode] = []
-    for c in active:
-        reason_codes.extend(c.reason_codes)
-    return _WindowEvaluation(
-        reason_codes=_ordered_reason_codes(reason_codes),
-        scheduled_at_local=earliest,
-        valid_until_local=min(c.valid_until_local for c in active),
-    )
-
-
 def _candidate_from_preferred_window(
     *,
     now_local: datetime,
@@ -620,6 +631,24 @@ def _candidate_from_habit_window(
         return None
 
     if _is_within_center_window(current_min, center_min, radius_min):
+        if center_min - current_min > ANCHOR_PROXIMITY_MIN:
+            # Inside window but far before anchor — defer to anchor time.
+            # Being in a wide habit window is not sufficient for send-now;
+            # the user should be close to when they actually log.
+            anchor_hour, anchor_minute = divmod(center_min, 60)
+            anchor_dt = datetime.combine(
+                now_local.date(),
+                time(anchor_hour, anchor_minute, 0),
+                tzinfo=now_local.tzinfo,
+            )
+            return _TimingCandidate(
+                source="habit",
+                scheduled_at_local=anchor_dt,
+                valid_until_local=window_end,
+                anchor_min=center_min,
+                is_immediate=False,
+                reason_codes=[day_reason, "habit_window_today"],
+            )
         return _TimingCandidate(
             source="habit",
             scheduled_at_local=now_local,
@@ -782,6 +811,16 @@ def _to_utc_z(value: datetime) -> str:
 
 def _end_of_local_day(now_local: datetime) -> datetime:
     return datetime.combine(now_local.date(), time(23, 59, 59), tzinfo=now_local.tzinfo)
+
+
+def _is_schedule_quiet_hours_safe(
+    scheduled_at: datetime,
+    quiet_hours: ReminderQuietHours | None,
+) -> bool:
+    """Return True if *scheduled_at* does not fall inside quiet hours."""
+    if quiet_hours is None:
+        return True
+    return not _is_within_quiet_hours(_minute_of_day(scheduled_at), quiet_hours)
 
 
 def _is_within_quiet_hours(current_min: int, quiet_hours: ReminderQuietHours | None) -> bool:

@@ -755,6 +755,196 @@ def test_complete_day_respects_preference_bounds() -> None:
     assert "preferred_window_today" in decision.reasonCodes
 
 
+# ---------------------------------------------------------------------------
+# Hardening — preference hard bounds, quiet hours revalidation, tighter overlap
+# ---------------------------------------------------------------------------
+
+
+def test_habit_blocked_after_preferred_window_passed() -> None:
+    """When a preferred window has passed, habit-only candidates must not
+    produce a send decision — preferences are hard bounds."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # firstMealMedianHour=8.25 → anchor 495, habit window [405, 585]
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # 7:00–9:00 window — already passed by 9:30
+            first_meal_window=ReminderWindow(start_min=420, end_min=540)
+        ),
+        activity=ReminderActivityInput(),
+        # 9:30 = 570 — preferred window passed, but inside habit window [405, 585]
+        context=_context(9, 30),
+    )
+
+    # Old behavior: habit candidate fires (anchor 495 inside [420, 540])
+    # New behavior: preferred window has passed → hard bound → no send
+    assert decision.decision == "noop"
+
+
+def test_deferred_schedule_blocked_by_quiet_hours() -> None:
+    """A deferred schedule that would land inside quiet hours must not be sent,
+    even if the current time is outside quiet hours."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    # firstMealMedianHour=8.25 → anchor 495 (8:15), strong signal (observedDays=8)
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # Wide preferred window 6:00–11:00
+            first_meal_window=ReminderWindow(start_min=360, end_min=660),
+            # Morning focus: quiet hours 8:00–10:00
+            quiet_hours=ReminderQuietHours(start_hour=8, end_hour=10),
+        ),
+        activity=ReminderActivityInput(),
+        # 7:00 = 420 — not in quiet hours, preferred window open
+        context=_context(7, 0),
+    )
+
+    # Strong signal would defer to habit anchor 8:15, but 8:15 is in quiet hours.
+    # Engine must not schedule into quiet hours.
+    assert decision.decision != "send" or (
+        decision.scheduledAtUtc is not None
+        and decision.scheduledAtUtc < "2026-03-18T08:00:00Z"
+    )
+
+
+def test_habit_window_far_from_anchor_defers_to_anchor() -> None:
+    """Inside a habit window but far from its anchor: defer to the anchor
+    instead of sending immediately. Being in a 180-min window is not
+    sufficient for send-now — proximity to the anchor matters."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+    # lunchMedianHour=13.0 → anchor 780, habit window [690, 870]
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),  # no preferred window
+        activity=ReminderActivityInput(),
+        # 12:00 = 720 — inside lunch habit window [690, 870] but 60 min from anchor
+        context=_context(12, 0),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    # Deferred to anchor 13:00, NOT immediate at 12:00
+    assert decision.scheduledAtUtc == "2026-03-18T13:00:00Z"
+    assert "habit_window_today" in decision.reasonCodes
+    assert "logging_usually_happens_now" not in decision.reasonCodes
+
+
+def test_habit_window_near_anchor_sends_immediately() -> None:
+    """Inside a habit window AND close to the anchor: send now.
+    Verifies the proximity threshold works in both directions."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+    # lunchMedianHour=13.0 → anchor 780
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        # 12:55 = 775 — inside habit window, 5 min from anchor
+        context=_context(12, 55),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T12:55:00Z"
+    assert "habit_window_match" in decision.reasonCodes
+    assert "logging_usually_happens_now" in decision.reasonCodes
+
+
+def test_habit_window_past_anchor_still_sends_immediately() -> None:
+    """Past the anchor but still inside the habit window: send now.
+    The user likely hasn't logged yet — they need the reminder."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+    # lunchMedianHour=13.0 → anchor 780, window [690, 870]
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        # 13:50 = 830 — past anchor by 50 min, still inside window
+        context=_context(13, 50),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T13:50:00Z"
+    assert "habit_window_match" in decision.reasonCodes
+
+
+def test_competing_habit_anchors_nearest_immediate_wins() -> None:
+    """When multiple habit windows overlap at the current time, the anchor
+    closest to now must win.  A far anchor in the same window should produce
+    a deferred candidate, leaving the close one as the only immediate."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 1
+    state.quality.dataCompletenessScore = 1.0
+    # Move snack close to lunch so their windows overlap at 13:05.
+    # lunch anchor  = 780 (13:00), window [690, 870]
+    # snack anchor  = 840 (14:00), window [750, 930]
+    state.habits.behavior.timingPatterns14.snackMedianHour = 14.0
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),  # no preferred window
+        activity=ReminderActivityInput(),
+        # 13:05 = 785 — inside both lunch [690,870] and snack [750,930] windows
+        # lunch anchor 780: distance = 780-785 = -5  → immediate (close)
+        # snack anchor 840: distance = 840-785 = 55  → deferred (far)
+        context=_context(13, 5),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    # Lunch anchor is 5 min away → immediate wins over snack (55 min away)
+    assert decision.scheduledAtUtc == "2026-03-18T13:05:00Z"
+    assert "habit_window_match" in decision.reasonCodes
+    assert "logging_usually_happens_now" in decision.reasonCodes
+
+
+def test_complete_day_fallback_respects_preference_bounds() -> None:
+    """When complete_day is rejected (window passed), the engine falls through
+    to log_next_meal.  The fallback path must also respect its own preference
+    bounds — habit anchors outside next_meal_window must not influence timing."""
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            # complete_day window 18:00–19:00 — already passed at 20:00
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1140),
+            # next_meal window 20:00–21:00 — constrains fallback
+            next_meal_window=ReminderWindow(start_min=1200, end_min=1260),
+        ),
+        activity=ReminderActivityInput(),
+        # 20:00 = 1200 — past complete_day window, inside next_meal window
+        context=_context(20, 0),
+    )
+
+    # complete_day window passed → rejected by hard bound.
+    # Falls through to log_next_meal with preference [1200, 1260].
+    # Dinner/lastMeal anchors at 1140 (19:00) are OUTSIDE [1200, 1260] → bounded out.
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    # Scheduled at preferred window open (20:00), not at habit anchor (19:00)
+    assert decision.scheduledAtUtc == "2026-03-18T20:00:00Z"
+    assert "preferred_window_open" in decision.reasonCodes
+    assert "habit_window_match" not in decision.reasonCodes
+
+
 def test_complete_day_not_sent_with_too_few_meals() -> None:
     """With only 1 meal logged out of expected 3, the day is still in progress.
     Should get log_next_meal instead of complete_day."""
