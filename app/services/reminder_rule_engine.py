@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from math import ceil
@@ -8,15 +9,27 @@ from typing import Iterable, Literal
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision, ReminderReasonCode
 
+logger = logging.getLogger(__name__)
+
 FIRST_MEAL_WINDOW_RADIUS_MIN = 90
 NEXT_MEAL_WINDOW_RADIUS_MIN = 90
 COMPLETE_DAY_WINDOW_RADIUS_MIN = 120
 RECENT_ACTIVITY_SUPPRESSION_MIN = 90
 LATEST_COMPLETE_DAY_START_MIN = 18 * 60
 DAILY_REMINDER_CAP = 3
-ANCHOR_PROXIMITY_MIN = 30
-STRONG_HABIT_OBSERVED_DAYS = 7
 COMPLETE_DAY_BUFFER_MIN = 30
+
+RESPONSIVE_PROFILE_MIN_OBSERVED_DAYS = 6
+RESPONSIVE_PROFILE_MIN_VALID_LOGGING_DAYS7 = 4
+RESPONSIVE_PROFILE_MIN_CONSISTENCY28 = 0.45
+SELF_SUFFICIENT_PROFILE_MIN_CONSISTENCY28 = 0.7
+SELF_SUFFICIENT_PROFILE_MIN_VALID_DAYS14 = 8
+SELF_SUFFICIENT_PROFILE_MIN_AVG_MEALS14 = 3.0
+LOW_ENGAGEMENT_PROFILE_MAX_VALID_LOGGING_DAYS7 = 2
+LOW_ENGAGEMENT_PROFILE_MAX_CONSISTENCY28_EXCLUSIVE = 0.3
+LOW_ENGAGEMENT_PROFILE_MAX_VALID_DAYS14 = 3
+SELF_SUFFICIENT_DIRECT_TIMING_ANCHOR_PROXIMITY_MIN = 35
+LOW_ENGAGEMENT_DIRECT_TIMING_ANCHOR_PROXIMITY_MIN = 45
 
 REASON_CODE_ORDER: tuple[ReminderReasonCode, ...] = (
     "reminders_disabled",
@@ -77,6 +90,12 @@ class _WindowEvaluation:
 
 
 _CandidateSource = Literal["preferred", "habit"]
+_PersonalizationSegment = Literal[
+    "responsive",
+    "neutral",
+    "low_engagement",
+    "self_sufficient",
+]
 
 
 @dataclass(frozen=True)
@@ -87,6 +106,53 @@ class _TimingCandidate:
     anchor_min: int
     is_immediate: bool
     reason_codes: list[ReminderReasonCode]
+
+
+@dataclass(frozen=True)
+class ReminderPersonalizationProfile:
+    """Bounded per-user reminder profile for future timing/kind biasing.
+
+    The segment is derived deterministically from existing habit/logging
+    signals. It does not represent reminder-response telemetry.
+    """
+
+    segment: _PersonalizationSegment
+
+
+@dataclass(frozen=True)
+class ReminderTimingPolicy:
+    """Small bounded knobs that a personalization segment may influence."""
+
+    strong_habit_observed_days_min: int
+    anchor_proximity_min: int
+    prefer_anchor_inside_window: bool
+    complete_day_guarded: bool
+
+
+RESPONSIVE_TIMING_POLICY = ReminderTimingPolicy(
+    strong_habit_observed_days_min=6,
+    anchor_proximity_min=20,
+    prefer_anchor_inside_window=True,
+    complete_day_guarded=False,
+)
+NEUTRAL_TIMING_POLICY = ReminderTimingPolicy(
+    strong_habit_observed_days_min=7,
+    anchor_proximity_min=30,
+    prefer_anchor_inside_window=True,
+    complete_day_guarded=False,
+)
+SELF_SUFFICIENT_TIMING_POLICY = ReminderTimingPolicy(
+    strong_habit_observed_days_min=8,
+    anchor_proximity_min=SELF_SUFFICIENT_DIRECT_TIMING_ANCHOR_PROXIMITY_MIN,
+    prefer_anchor_inside_window=False,
+    complete_day_guarded=True,
+)
+LOW_ENGAGEMENT_TIMING_POLICY = ReminderTimingPolicy(
+    strong_habit_observed_days_min=8,
+    anchor_proximity_min=LOW_ENGAGEMENT_DIRECT_TIMING_ANCHOR_PROXIMITY_MIN,
+    prefer_anchor_inside_window=False,
+    complete_day_guarded=True,
+)
 
 
 def evaluate_reminder_decision(
@@ -131,6 +197,17 @@ def evaluate_reminder_decision(
             validUntil=_to_utc_z(_end_of_local_day(now_local)),
         )
 
+    profile = _build_personalization_profile(state=state)
+    timing_policy = _timing_policy_for_profile(profile)
+    logger.debug(
+        "reminder.personalization.evaluated",
+        extra={
+            "day_key": state.dayKey,
+            "segment": profile.segment,
+            "timing_policy": _timing_policy_label(profile),
+        },
+    )
+
     if _is_day_empty(state):
         return _evaluate_first_meal_decision(
             state=state,
@@ -138,6 +215,7 @@ def evaluate_reminder_decision(
             now_local=now_local,
             current_min=current_min,
             computed_at=computed_at,
+            timing_policy=timing_policy,
         )
 
     if _is_later_incomplete_day(state, current_min=current_min):
@@ -147,6 +225,7 @@ def evaluate_reminder_decision(
             now_local=now_local,
             current_min=current_min,
             computed_at=computed_at,
+            timing_policy=timing_policy,
         )
         if complete_day_decision is not None:
             return complete_day_decision
@@ -158,6 +237,7 @@ def evaluate_reminder_decision(
             now_local=now_local,
             current_min=current_min,
             computed_at=computed_at,
+            timing_policy=timing_policy,
         )
         if next_meal_decision is not None:
             return next_meal_decision
@@ -179,6 +259,7 @@ def _evaluate_first_meal_decision(
     now_local: datetime,
     current_min: int,
     computed_at: str,
+    timing_policy: ReminderTimingPolicy,
 ) -> ReminderDecision:
     if not _has_enough_signal(state):
         return ReminderDecision(
@@ -199,6 +280,7 @@ def _evaluate_first_meal_decision(
         day_reason="day_empty",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
         quiet_hours=preferences.quiet_hours,
+        timing_policy=timing_policy,
     )
     if window_evaluation is None:
         return ReminderDecision(
@@ -229,6 +311,7 @@ def _evaluate_next_meal_decision(
     now_local: datetime,
     current_min: int,
     computed_at: str,
+    timing_policy: ReminderTimingPolicy,
 ) -> ReminderDecision | None:
     if not _has_enough_signal(state):
         return None
@@ -242,6 +325,7 @@ def _evaluate_next_meal_decision(
         day_reason="day_partially_logged",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
         quiet_hours=preferences.quiet_hours,
+        timing_policy=timing_policy,
     )
     if window_evaluation is None:
         return None
@@ -265,11 +349,15 @@ def _evaluate_complete_day_decision(
     now_local: datetime,
     current_min: int,
     computed_at: str,
+    timing_policy: ReminderTimingPolicy,
 ) -> ReminderDecision | None:
     if not _has_reasonable_complete_day_pattern(state):
         return None
 
-    if state.quality.mealsLogged < _minimum_complete_day_meals(state):
+    if state.quality.mealsLogged < _minimum_complete_day_meals(
+        state,
+        guarded=timing_policy.complete_day_guarded,
+    ):
         return None
 
     window_evaluation = _evaluate_window_plan(
@@ -281,6 +369,7 @@ def _evaluate_complete_day_decision(
         day_reason="day_partially_logged",
         observed_days=state.habits.behavior.timingPatterns14.observedDays,
         quiet_hours=preferences.quiet_hours,
+        timing_policy=timing_policy,
     )
     if window_evaluation is None:
         return None
@@ -350,6 +439,7 @@ def _evaluate_window_plan(
     radius_min: int,
     day_reason: ReminderReasonCode,
     observed_days: int,
+    timing_policy: ReminderTimingPolicy,
     quiet_hours: ReminderQuietHours | None = None,
 ) -> _WindowEvaluation | None:
     candidates = _collect_timing_candidates(
@@ -359,6 +449,7 @@ def _evaluate_window_plan(
         habit_minutes=habit_minutes,
         radius_min=radius_min,
         day_reason=day_reason,
+        anchor_proximity_min=timing_policy.anchor_proximity_min,
     )
     if not candidates:
         return None
@@ -377,6 +468,7 @@ def _evaluate_window_plan(
         preferred_window=preferred_window,
         observed_days=observed_days,
         day_reason=day_reason,
+        timing_policy=timing_policy,
     )
 
     # Revalidate: deferred schedule must not land in quiet hours.
@@ -396,6 +488,7 @@ def _collect_timing_candidates(
     habit_minutes: Iterable[int | None],
     radius_min: int,
     day_reason: ReminderReasonCode,
+    anchor_proximity_min: int,
 ) -> list[_TimingCandidate]:
     candidates: list[_TimingCandidate] = []
 
@@ -417,6 +510,7 @@ def _collect_timing_candidates(
             center_min=habit_min,
             radius_min=radius_min,
             day_reason=day_reason,
+            anchor_proximity_min=anchor_proximity_min,
         )
         if candidate is not None:
             candidates.append(candidate)
@@ -432,6 +526,7 @@ def _resolve_timing_plan(
     preferred_window: ReminderWindow | None,
     observed_days: int,
     day_reason: ReminderReasonCode,
+    timing_policy: ReminderTimingPolicy,
 ) -> _WindowEvaluation:
     """Select the best timing from viable preferred/habit candidates."""
     preferred_list = [c for c in candidates if c.source == "preferred"]
@@ -454,7 +549,7 @@ def _resolve_timing_plan(
     if best_pref is None:
         return _candidate_to_evaluation(best_habit)
 
-    strong_signal = observed_days >= STRONG_HABIT_OBSERVED_DAYS
+    strong_signal = observed_days >= timing_policy.strong_habit_observed_days_min
 
     if best_pref.is_immediate:
         if best_habit.is_immediate:
@@ -462,7 +557,7 @@ def _resolve_timing_plan(
             # so merge explainability from both preference and habit.
             return _merge_candidates_evaluation(best_pref, best_habit)
 
-        if strong_signal:
+        if strong_signal and timing_policy.prefer_anchor_inside_window:
             return _deferred_anchor_evaluation(
                 now_local=now_local,
                 anchor_min=best_habit.anchor_min,
@@ -473,7 +568,7 @@ def _resolve_timing_plan(
 
         return _candidate_to_evaluation(best_pref)
 
-    if strong_signal:
+    if strong_signal and timing_policy.prefer_anchor_inside_window:
         pref_start_min = _minute_of_day(best_pref.scheduled_at_local)
         if best_habit.anchor_min > pref_start_min:
             return _deferred_anchor_evaluation(
@@ -597,6 +692,7 @@ def _candidate_from_habit_window(
     center_min: int,
     radius_min: int,
     day_reason: ReminderReasonCode,
+    anchor_proximity_min: int,
 ) -> _TimingCandidate | None:
     window_end = _center_window_end_datetime(
         now_local=now_local,
@@ -607,7 +703,11 @@ def _candidate_from_habit_window(
         return None
 
     if _is_within_center_window(current_min, center_min, radius_min):
-        if _is_far_before_anchor(current_min=current_min, anchor_min=center_min):
+        if _is_far_before_anchor(
+            current_min=current_min,
+            anchor_min=center_min,
+            proximity_min=anchor_proximity_min,
+        ):
             # The broad habit window marks the day as relevant, but send-now is
             # only justified when the upcoming anchor is actually near.
             anchor_hour, anchor_minute = divmod(center_min, 60)
@@ -649,6 +749,71 @@ def _candidate_from_habit_window(
         )
 
     return None
+
+
+def _build_personalization_profile(
+    *,
+    state: NutritionStateResponse,
+) -> ReminderPersonalizationProfile:
+    """Classify reminder style from existing behavior signals only.
+
+    The profile is intentionally conservative: it relies on stable habit/logging
+    inputs already present in ``NutritionStateResponse`` and ignores delivery
+    outcomes, which the decision layer does not own.
+    """
+
+    behavior = state.habits.behavior
+    timing = behavior.timingPatterns14
+
+    if (
+        behavior.validLoggingConsistency28 >= SELF_SUFFICIENT_PROFILE_MIN_CONSISTENCY28
+        and behavior.dayCoverage14.validLoggedDays >= SELF_SUFFICIENT_PROFILE_MIN_VALID_DAYS14
+        and behavior.avgValidMealsPerValidLoggedDay14 >= SELF_SUFFICIENT_PROFILE_MIN_AVG_MEALS14
+    ):
+        return ReminderPersonalizationProfile(segment="self_sufficient")
+
+    if (
+        timing.observedDays >= RESPONSIVE_PROFILE_MIN_OBSERVED_DAYS
+        and behavior.validLoggingDays7 >= RESPONSIVE_PROFILE_MIN_VALID_LOGGING_DAYS7
+        and behavior.validLoggingConsistency28 >= RESPONSIVE_PROFILE_MIN_CONSISTENCY28
+    ):
+        return ReminderPersonalizationProfile(segment="responsive")
+
+    if (
+        behavior.validLoggingDays7 <= LOW_ENGAGEMENT_PROFILE_MAX_VALID_LOGGING_DAYS7
+        or behavior.validLoggingConsistency28 < LOW_ENGAGEMENT_PROFILE_MAX_CONSISTENCY28_EXCLUSIVE
+        or behavior.dayCoverage14.validLoggedDays <= LOW_ENGAGEMENT_PROFILE_MAX_VALID_DAYS14
+    ):
+        return ReminderPersonalizationProfile(segment="low_engagement")
+
+    return ReminderPersonalizationProfile(segment="neutral")
+
+
+def _timing_policy_for_profile(
+    profile: ReminderPersonalizationProfile,
+) -> ReminderTimingPolicy:
+    """Return bounded timing knobs for a profile.
+
+    These knobs may bias timing selection, but they must not bypass
+    suppressions, quiet hours, or preferred-window hard bounds.
+    """
+    if profile.segment == "responsive":
+        return RESPONSIVE_TIMING_POLICY
+    if profile.segment == "low_engagement":
+        return LOW_ENGAGEMENT_TIMING_POLICY
+    if profile.segment == "self_sufficient":
+        return SELF_SUFFICIENT_TIMING_POLICY
+    return NEUTRAL_TIMING_POLICY
+
+
+def _timing_policy_label(profile: ReminderPersonalizationProfile) -> str:
+    if profile.segment == "responsive":
+        return "responsive"
+    if profile.segment == "low_engagement":
+        return "low_engagement_direct"
+    if profile.segment == "self_sufficient":
+        return "self_sufficient_direct"
+    return "neutral"
 
 
 def _has_enough_signal(state: NutritionStateResponse) -> bool:
@@ -728,8 +893,15 @@ def _complete_day_anchor_min(state: NutritionStateResponse) -> int:
     )
 
 
-def _minimum_complete_day_meals(state: NutritionStateResponse) -> int:
-    return max(1, _expected_complete_meals(state) - 1)
+def _minimum_complete_day_meals(
+    state: NutritionStateResponse,
+    *,
+    guarded: bool = False,
+) -> int:
+    expected_meals = _expected_complete_meals(state)
+    if guarded:
+        return expected_meals
+    return max(1, expected_meals - 1)
 
 
 def _candidate_habit_minutes(
@@ -837,8 +1009,13 @@ def _is_minute_in_window(current_min: int, window: ReminderWindow) -> bool:
     return current_min >= window.start_min or current_min <= window.end_min
 
 
-def _is_far_before_anchor(*, current_min: int, anchor_min: int) -> bool:
-    return anchor_min > current_min and (anchor_min - current_min) > ANCHOR_PROXIMITY_MIN
+def _is_far_before_anchor(
+    *,
+    current_min: int,
+    anchor_min: int,
+    proximity_min: int,
+) -> bool:
+    return anchor_min > current_min and (anchor_min - current_min) > proximity_min
 
 
 def _window_end_datetime(now_local: datetime, window: ReminderWindow) -> datetime:

@@ -8,9 +8,13 @@ from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.reminder_rule_engine import (
     ReminderActivityInput,
     ReminderContextInput,
+    ReminderPersonalizationProfile,
     ReminderPreferencesInput,
     ReminderQuietHours,
+    ReminderTimingPolicy,
     ReminderWindow,
+    _build_personalization_profile,
+    _timing_policy_for_profile,
     evaluate_reminder_decision,
 )
 
@@ -1018,6 +1022,371 @@ def test_complete_day_not_sent_with_too_few_meals() -> None:
     assert decision.decision == "send"
     assert decision.kind == "log_next_meal"
     assert decision.scheduledAtUtc == "2026-03-18T20:00:00Z"
+    assert decision.reasonCodes == [
+        "habit_window_match",
+        "day_partially_logged",
+        "logging_usually_happens_now",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Smart Reminders v1.6 groundwork — bounded personalization profile
+# ---------------------------------------------------------------------------
+
+
+def test_personalization_profile_classifies_self_sufficient_user() -> None:
+    state = _load_state_fixture()
+    state.habits.behavior.validLoggingConsistency28 = 0.82
+    state.habits.behavior.dayCoverage14.validLoggedDays = 10
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 3.4
+    state.habits.behavior.validLoggingDays7 = 5
+    state.habits.behavior.timingPatterns14.observedDays = 9
+
+    profile = _build_personalization_profile(
+        state=state,
+    )
+
+    assert profile == ReminderPersonalizationProfile(segment="self_sufficient")
+
+
+def test_personalization_profile_classifies_responsive_user() -> None:
+    state = _load_state_fixture()
+    state.habits.behavior.validLoggingConsistency28 = 0.58
+    state.habits.behavior.dayCoverage14.validLoggedDays = 6
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.6
+    state.habits.behavior.validLoggingDays7 = 4
+    state.habits.behavior.timingPatterns14.observedDays = 8
+
+    profile = _build_personalization_profile(
+        state=state,
+    )
+
+    assert profile == ReminderPersonalizationProfile(segment="responsive")
+
+
+def test_personalization_profile_classifies_low_engagement_user() -> None:
+    state = _load_state_fixture()
+    state.habits.behavior.validLoggingDays7 = 2
+    state.habits.behavior.validLoggingConsistency28 = 0.29
+    state.habits.behavior.dayCoverage14.validLoggedDays = 3
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 1.4
+    state.habits.behavior.timingPatterns14.observedDays = 2
+
+    profile = _build_personalization_profile(
+        state=state,
+    )
+
+    assert profile == ReminderPersonalizationProfile(segment="low_engagement")
+
+
+def test_personalization_profile_falls_back_to_neutral() -> None:
+    state = _load_state_fixture()
+    state.habits.behavior.validLoggingConsistency28 = 0.4
+    state.habits.behavior.dayCoverage14.validLoggedDays = 4
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.2
+    state.habits.behavior.validLoggingDays7 = 3
+    state.habits.behavior.timingPatterns14.observedDays = 5
+
+    profile = _build_personalization_profile(
+        state=state,
+    )
+
+    assert profile == ReminderPersonalizationProfile(segment="neutral")
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_policy"),
+    [
+        (
+            ReminderPersonalizationProfile(segment="responsive"),
+            ReminderTimingPolicy(
+                strong_habit_observed_days_min=6,
+                anchor_proximity_min=20,
+                prefer_anchor_inside_window=True,
+                complete_day_guarded=False,
+            ),
+        ),
+        (
+            ReminderPersonalizationProfile(segment="neutral"),
+            ReminderTimingPolicy(
+                strong_habit_observed_days_min=7,
+                anchor_proximity_min=30,
+                prefer_anchor_inside_window=True,
+                complete_day_guarded=False,
+            ),
+        ),
+        (
+            ReminderPersonalizationProfile(segment="low_engagement"),
+            ReminderTimingPolicy(
+                strong_habit_observed_days_min=8,
+                anchor_proximity_min=45,
+                prefer_anchor_inside_window=False,
+                complete_day_guarded=True,
+            ),
+        ),
+        (
+            ReminderPersonalizationProfile(segment="self_sufficient"),
+            ReminderTimingPolicy(
+                strong_habit_observed_days_min=8,
+                anchor_proximity_min=35,
+                prefer_anchor_inside_window=False,
+                complete_day_guarded=True,
+            ),
+        ),
+    ],
+)
+def test_personalization_timing_policy_is_bounded_and_deterministic(
+    profile: ReminderPersonalizationProfile,
+    expected_policy: ReminderTimingPolicy,
+) -> None:
+    policy = _timing_policy_for_profile(profile)
+
+    assert policy == expected_policy
+    assert 6 <= policy.strong_habit_observed_days_min <= 8
+    assert 20 <= policy.anchor_proximity_min <= 45
+
+
+def test_responsive_profile_defers_with_lower_strong_signal_threshold() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.validLoggingDays7 = 4
+    state.habits.behavior.validLoggingConsistency28 = 0.55
+    state.habits.behavior.dayCoverage14.validLoggedDays = 6
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.6
+    state.habits.behavior.timingPatterns14.observedDays = 6
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(6, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert decision.reasonCodes == [
+        "preferred_window_open",
+        "habit_window_today",
+        "day_empty",
+    ]
+
+
+def test_neutral_profile_keeps_preference_timing_in_same_window() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.validLoggingDays7 = 3
+    state.habits.behavior.validLoggingConsistency28 = 0.4
+    state.habits.behavior.dayCoverage14.validLoggedDays = 5
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.3
+    state.habits.behavior.timingPatterns14.observedDays = 6
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            first_meal_window=ReminderWindow(start_min=360, end_min=660)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(6, 20),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T06:20:00Z"
+    assert decision.reasonCodes == [
+        "preferred_window_open",
+        "day_empty",
+    ]
+
+
+def test_responsive_profile_defers_when_inside_habit_window_but_25_minutes_early() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.validLoggingDays7 = 4
+    state.habits.behavior.validLoggingConsistency28 = 0.55
+    state.habits.behavior.dayCoverage14.validLoggedDays = 6
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.6
+    state.habits.behavior.timingPatterns14.observedDays = 8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        context=_context(7, 50),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert decision.reasonCodes == [
+        "habit_window_today",
+        "day_empty",
+    ]
+
+
+def test_self_sufficient_profile_sends_now_in_same_25_minute_habit_overlap() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 0
+    state.quality.dataCompletenessScore = 1.0
+    state.habits.behavior.validLoggingDays7 = 5
+    state.habits.behavior.validLoggingConsistency28 = 0.82
+    state.habits.behavior.dayCoverage14.validLoggedDays = 10
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 3.4
+    state.habits.behavior.timingPatterns14.observedDays = 8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        context=_context(7, 50),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_first_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T07:50:00Z"
+    assert decision.reasonCodes == [
+        "habit_window_match",
+        "day_empty",
+        "logging_usually_happens_now",
+    ]
+
+
+def test_guarded_profiles_diverge_at_40_minute_anchor_boundary() -> None:
+    low_engagement_state = _load_state_fixture()
+    low_engagement_state.quality.mealsLogged = 0
+    low_engagement_state.quality.dataCompletenessScore = 1.0
+    low_engagement_state.habits.behavior.validLoggingDays7 = 2
+    low_engagement_state.habits.behavior.validLoggingConsistency28 = 0.29
+    low_engagement_state.habits.behavior.dayCoverage14.validLoggedDays = 3
+    low_engagement_state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 1.8
+    low_engagement_state.habits.behavior.timingPatterns14.observedDays = 8
+
+    self_sufficient_state = _load_state_fixture()
+    self_sufficient_state.quality.mealsLogged = 0
+    self_sufficient_state.quality.dataCompletenessScore = 1.0
+    self_sufficient_state.habits.behavior.validLoggingDays7 = 5
+    self_sufficient_state.habits.behavior.validLoggingConsistency28 = 0.82
+    self_sufficient_state.habits.behavior.dayCoverage14.validLoggedDays = 10
+    self_sufficient_state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 3.4
+    self_sufficient_state.habits.behavior.timingPatterns14.observedDays = 8
+
+    low_engagement_decision = evaluate_reminder_decision(
+        state=low_engagement_state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        context=_context(7, 35),
+    )
+    self_sufficient_decision = evaluate_reminder_decision(
+        state=self_sufficient_state,
+        preferences=ReminderPreferencesInput(),
+        activity=ReminderActivityInput(),
+        context=_context(7, 35),
+    )
+
+    assert low_engagement_decision.decision == "send"
+    assert low_engagement_decision.kind == "log_first_meal"
+    assert low_engagement_decision.scheduledAtUtc == "2026-03-18T07:35:00Z"
+    assert low_engagement_decision.reasonCodes == [
+        "habit_window_match",
+        "day_empty",
+        "logging_usually_happens_now",
+    ]
+
+    assert self_sufficient_decision.decision == "send"
+    assert self_sufficient_decision.kind == "log_first_meal"
+    assert self_sufficient_decision.scheduledAtUtc == "2026-03-18T08:15:00Z"
+    assert self_sufficient_decision.reasonCodes == [
+        "habit_window_today",
+        "day_empty",
+    ]
+
+
+def test_responsive_profile_keeps_complete_day_after_buffer() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+    state.habits.behavior.validLoggingDays7 = 4
+    state.habits.behavior.validLoggingConsistency28 = 0.55
+    state.habits.behavior.dayCoverage14.validLoggedDays = 6
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.6
+    state.habits.behavior.timingPatterns14.observedDays = 6
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1320)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(19, 45),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "complete_day"
+    assert decision.scheduledAtUtc == "2026-03-18T19:45:00Z"
+    assert decision.reasonCodes == [
+        "preferred_window_open",
+        "habit_window_match",
+        "day_partially_logged",
+        "logging_usually_happens_now",
+    ]
+
+
+def test_low_engagement_profile_biases_complete_day_to_next_meal_fallback() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 2
+    state.quality.dataCompletenessScore = 0.8
+    state.habits.behavior.validLoggingDays7 = 2
+    state.habits.behavior.validLoggingConsistency28 = 0.4
+    state.habits.behavior.dayCoverage14.validLoggedDays = 4
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.5
+    state.habits.behavior.timingPatterns14.observedDays = 8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1320)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(19, 45),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T19:45:00Z"
+    assert decision.reasonCodes == [
+        "habit_window_match",
+        "day_partially_logged",
+        "logging_usually_happens_now",
+    ]
+
+
+def test_self_sufficient_profile_biases_complete_day_to_next_meal_fallback() -> None:
+    state = _load_state_fixture()
+    state.quality.mealsLogged = 3
+    state.quality.dataCompletenessScore = 0.85
+    state.habits.behavior.validLoggingDays7 = 5
+    state.habits.behavior.validLoggingConsistency28 = 0.82
+    state.habits.behavior.dayCoverage14.validLoggedDays = 10
+    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 3.4
+    state.habits.behavior.timingPatterns14.observedDays = 8
+
+    decision = evaluate_reminder_decision(
+        state=state,
+        preferences=ReminderPreferencesInput(
+            complete_day_window=ReminderWindow(start_min=1080, end_min=1320)
+        ),
+        activity=ReminderActivityInput(),
+        context=_context(19, 45),
+    )
+
+    assert decision.decision == "send"
+    assert decision.kind == "log_next_meal"
+    assert decision.scheduledAtUtc == "2026-03-18T19:45:00Z"
     assert decision.reasonCodes == [
         "habit_window_match",
         "day_partially_logged",
