@@ -363,8 +363,8 @@ def _evaluate_window_plan(
     if not candidates:
         return None
 
-    # Hard bound: if preference window exists but has passed, do not send.
-    # Habit candidates alone must not bypass the user's preferred timing.
+    # A configured preferred window is a hard bound. Once its candidate is
+    # gone for today, habit timing must not resurrect scheduling outside it.
     if preferred_window is not None:
         has_preferred = any(c.source == "preferred" for c in candidates)
         if not has_preferred:
@@ -433,20 +433,12 @@ def _resolve_timing_plan(
     observed_days: int,
     day_reason: ReminderReasonCode,
 ) -> _WindowEvaluation:
-    """Select the best timing from viable candidates.
-
-    Applies overlap resolution, send-now-vs-defer heuristics,
-    and habit signal weighting to choose the optimal schedule.
-    """
+    """Select the best timing from viable preferred/habit candidates."""
     preferred_list = [c for c in candidates if c.source == "preferred"]
     habit_list = [c for c in candidates if c.source == "habit"]
 
     best_pref = preferred_list[0] if preferred_list else None
 
-    # Bound habit anchors within the preference window.  The upstream
-    # _evaluate_window_plan guarantees that a preferred candidate exists
-    # whenever preferred_window is configured (it returns None otherwise),
-    # so this guard is always a real bound.
     if preferred_window is not None:
         habit_list = [
             h for h in habit_list
@@ -455,34 +447,21 @@ def _resolve_timing_plan(
 
     best_habit = _select_best_habit(habit_list, current_min)
 
-    # Preference-only: all habit candidates bounded out or absent.
-    # When preferred_list is empty bounding is skipped, so habit_list keeps
-    # every candidate and _select_best_habit always returns one — meaning
-    # best_pref is guaranteed non-None on this path.
     if best_habit is None:
         assert best_pref is not None
         return _candidate_to_evaluation(best_pref)
 
-    # Habit-only path (no preference window configured)
     if best_pref is None:
         return _candidate_to_evaluation(best_habit)
 
-    # Overlap: both preferred and habit exist
     strong_signal = observed_days >= STRONG_HABIT_OBSERVED_DAYS
 
     if best_pref.is_immediate:
-        # Preferred window is open now
         if best_habit.is_immediate:
-            # Close to anchor inside both windows → send now with merged reasons.
-            # _candidate_from_habit_window guarantees is_immediate only when the
-            # user is within ANCHOR_PROXIMITY_MIN of the habit anchor, so this
-            # merge always represents a genuine overlap.
+            # The habit candidate already decided "send now" is acceptable,
+            # so merge explainability from both preference and habit.
             return _merge_candidates_evaluation(best_pref, best_habit)
 
-        # Habit is deferred: anchor is meaningfully in the future.
-        # _candidate_from_habit_window already enforces the proximity threshold
-        # for immediacy, so every non-immediate habit is far enough to warrant
-        # a defer-vs-send-now decision based on signal strength.
         if strong_signal:
             return _deferred_anchor_evaluation(
                 now_local=now_local,
@@ -492,14 +471,11 @@ def _resolve_timing_plan(
                 day_reason=day_reason,
             )
 
-        # Weak signal → trust preference, send now
         return _candidate_to_evaluation(best_pref)
 
-    # Preferred window not yet open
     if strong_signal:
         pref_start_min = _minute_of_day(best_pref.scheduled_at_local)
         if best_habit.anchor_min > pref_start_min:
-            # Defer to habit anchor (later than preferred start, within bounds)
             return _deferred_anchor_evaluation(
                 now_local=now_local,
                 anchor_min=best_habit.anchor_min,
@@ -508,7 +484,6 @@ def _resolve_timing_plan(
                 day_reason=day_reason,
             )
 
-    # Weak signal or habit anchor at/before preferred start → preferred start
     return _candidate_to_evaluation(best_pref)
 
 
@@ -518,8 +493,9 @@ def _select_best_habit(
     """Pick the most relevant habit candidate.
 
     Prefers immediate candidates (currently in a habit window) with the
-    anchor closest to *current_min*.  Falls back to the earliest future
-    deferred candidate.
+    anchor closest to *current_min*. Ties preserve the deterministic
+    candidate order from ``_candidate_habit_minutes``. Falls back to the
+    earliest future deferred candidate.
     """
     if not habits:
         return None
@@ -631,10 +607,9 @@ def _candidate_from_habit_window(
         return None
 
     if _is_within_center_window(current_min, center_min, radius_min):
-        if center_min - current_min > ANCHOR_PROXIMITY_MIN:
-            # Inside window but far before anchor — defer to anchor time.
-            # Being in a wide habit window is not sufficient for send-now;
-            # the user should be close to when they actually log.
+        if _is_far_before_anchor(current_min=current_min, anchor_min=center_min):
+            # The broad habit window marks the day as relevant, but send-now is
+            # only justified when the upcoming anchor is actually near.
             anchor_hour, anchor_minute = divmod(center_min, 60)
             anchor_dt = datetime.combine(
                 now_local.date(),
@@ -860,6 +835,10 @@ def _is_minute_in_window(current_min: int, window: ReminderWindow) -> bool:
     if window.start_min < window.end_min:
         return window.start_min <= current_min <= window.end_min
     return current_min >= window.start_min or current_min <= window.end_min
+
+
+def _is_far_before_anchor(*, current_min: int, anchor_min: int) -> bool:
+    return anchor_min > current_min and (anchor_min - current_min) > ANCHOR_PROXIMITY_MIN
 
 
 def _window_end_datetime(now_local: datetime, window: ReminderWindow) -> datetime:
