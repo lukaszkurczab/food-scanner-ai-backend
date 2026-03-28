@@ -44,6 +44,13 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "smart_reminder_noop",
         "smart_reminder_decision_failed",
         "smart_reminder_schedule_failed",
+        "onboarding_navigation",
+        "onboarding_step_completed",
+        "onboarding_completed",
+        "onboarding_step_skipped",
+        "onboarding_skip_confirmed",
+        "onboarding_exit_action",
+        "onboarding_option_selected",
     }
 )
 
@@ -112,6 +119,13 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "smart_reminder_schedule_failed": frozenset(
         {"reminderKind", "decision", "confidenceBucket", "failureReason"}
     ),
+    "onboarding_navigation": frozenset({"step", "mode", "direction"}),
+    "onboarding_step_completed": frozenset({"step", "mode"}),
+    "onboarding_completed": frozenset({"mode"}),
+    "onboarding_step_skipped": frozenset({"step", "mode"}),
+    "onboarding_skip_confirmed": frozenset({"step", "mode"}),
+    "onboarding_exit_action": frozenset({"mode", "action"}),
+    "onboarding_option_selected": frozenset({"step", "mode", "field", "value"}),
 }
 
 ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
@@ -141,6 +155,29 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
         "decision": frozenset({"send"}),
         "confidenceBucket": SMART_REMINDER_CONFIDENCE_BUCKETS,
         "failureReason": SMART_REMINDER_SCHEDULE_FAILURE_REASONS,
+    },
+    "onboarding_navigation": {
+        "mode": frozenset({"first", "refill"}),
+        "direction": frozenset({"next", "back"}),
+    },
+    "onboarding_step_completed": {
+        "mode": frozenset({"first", "refill"}),
+    },
+    "onboarding_completed": {
+        "mode": frozenset({"first", "refill"}),
+    },
+    "onboarding_step_skipped": {
+        "mode": frozenset({"first", "refill"}),
+    },
+    "onboarding_skip_confirmed": {
+        "mode": frozenset({"first", "refill"}),
+    },
+    "onboarding_exit_action": {
+        "mode": frozenset({"first", "refill"}),
+        "action": frozenset({"save", "discard"}),
+    },
+    "onboarding_option_selected": {
+        "mode": frozenset({"first", "refill"}),
     },
 }
 

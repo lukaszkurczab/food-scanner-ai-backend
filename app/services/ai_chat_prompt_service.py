@@ -102,7 +102,6 @@ def _focus_from_profile(profile: dict[str, Any]) -> str:
     return {
         "mealPlanning": "MP",
         "analyzingMistakes": "AM",
-        "quickAnswers": "QA",
         "motivation": "M",
     }.get(focus, "DEF")
 

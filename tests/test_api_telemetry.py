@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any
 
@@ -987,15 +988,16 @@ _USER_HASH_ROLLOUT = (
 def _sr_event(
     event_id: str,
     name: str,
-    day: str = "2026-03-18",
+    day: str | None = None,
     props: dict[str, Any] | None = None,
     user_hash: str = _USER_HASH_ROLLOUT,
 ) -> dict[str, object]:
     """Build a raw Firestore document for a smart-reminder event."""
+    resolved_day = day or datetime.now(UTC).strftime("%Y-%m-%d")
     return {
         "eventId": event_id,
         "name": name,
-        "ts": f"{day}T10:00:00Z",
+        "ts": f"{resolved_day}T10:00:00Z",
         "props": props or {},
         "sessionId": "sess-sr",
         "userHash": user_hash,
@@ -1004,7 +1006,7 @@ def _sr_event(
         "build": None,
         "locale": "pl-PL",
         "tzOffsetMin": 60,
-        "ingestedAt": f"{day}T10:00:01Z",
+        "ingestedAt": f"{resolved_day}T10:00:01Z",
     }
 
 
@@ -1285,20 +1287,24 @@ def test_smart_reminder_summary_daily_buckets(
     firestore_client = FakeFirestoreClient()
     mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
 
+    today = datetime.now(UTC).date()
+    previous_day = (today - timedelta(days=1)).isoformat()
+    current_day = today.isoformat()
+
     _seed_sr_events(firestore_client, [
-        _sr_event("sr-d1", "smart_reminder_scheduled", day="2026-03-17", props={
+        _sr_event("sr-d1", "smart_reminder_scheduled", day=previous_day, props={
             "reminderKind": "log_first_meal", "decision": "send",
             "confidenceBucket": "high", "scheduledWindow": "morning",
         }),
-        _sr_event("sr-d2", "smart_reminder_suppressed", day="2026-03-17", props={
+        _sr_event("sr-d2", "smart_reminder_suppressed", day=previous_day, props={
             "decision": "suppress", "suppressionReason": "quiet_hours",
             "confidenceBucket": "high",
         }),
-        _sr_event("sr-d3", "smart_reminder_scheduled", day="2026-03-18", props={
+        _sr_event("sr-d3", "smart_reminder_scheduled", day=current_day, props={
             "reminderKind": "log_next_meal", "decision": "send",
             "confidenceBucket": "medium", "scheduledWindow": "afternoon",
         }),
-        _sr_event("sr-d4", "smart_reminder_noop", day="2026-03-18", props={
+        _sr_event("sr-d4", "smart_reminder_noop", day=current_day, props={
             "decision": "noop", "noopReason": "insufficient_signal",
             "confidenceBucket": "low",
         }),
@@ -1315,12 +1321,12 @@ def test_smart_reminder_summary_daily_buckets(
 
     assert len(buckets) == 2
     assert buckets[0] == {
-        "day": "2026-03-17",
+        "day": previous_day,
         "scheduled": 1, "suppressed": 1, "noop": 0,
         "decisionFailed": 0, "scheduleFailed": 0,
     }
     assert buckets[1] == {
-        "day": "2026-03-18",
+        "day": current_day,
         "scheduled": 1, "suppressed": 0, "noop": 1,
         "decisionFailed": 0, "scheduleFailed": 0,
     }
