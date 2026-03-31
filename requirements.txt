@@ -4,11 +4,11 @@ uvicorn[standard]==0.34.0
 gunicorn==23.0.0
 
 # Config / env
-python-dotenv==1.0.1
-pydantic-settings==2.7.1
+python-dotenv==1.2.2
+pydantic-settings==2.13.1
 
 # Google / Firebase
-google-cloud-firestore==2.20.0
+google-cloud-firestore==2.26.0
 firebase-admin==6.6.0
 
 # AI SDK
@@ -17,7 +17,7 @@ scikit-learn==1.6.1
 joblib==1.4.2
 
 # Monitoring
-sentry-sdk[fastapi]==2.20.0
+sentry-sdk[fastapi]==2.57.0
 
 # Tests
 pytest==8.3.4
