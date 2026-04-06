@@ -1,0 +1,25 @@
+name: Ops Monitoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-health:
+    name: Backend health and latency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Check smoke health endpoint
+        run: bash scripts/check-health-endpoint.sh smoke https://fitaly-backend-smoke.up.railway.app/api/v1/health 3000
+
+      - name: Check production health endpoint
+        run: bash scripts/check-health-endpoint.sh production https://fitaly-backend-production.up.railway.app/api/v1/health 2000
