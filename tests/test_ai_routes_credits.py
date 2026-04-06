@@ -1,17 +1,47 @@
 """Integration tests for AI routes using the AI credits system."""
 
+from collections import deque
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Literal
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest_mock import MockerFixture
 
+import app.services.ai_gateway_service as _gw
 from app.core.config import settings
 from app.core.exceptions import AiCreditsExhaustedError, OpenAIServiceError
 from app.main import app
 from app.schemas.ai_credits import AiCreditsStatus, CreditCosts
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _mock_rate_limit(mocker: MockerFixture) -> None:
+    """Replace the Firestore-backed rate limiter with a fast in-memory one.
+
+    This keeps route integration tests self-contained and fast.  Tests that
+    need to exercise the rate-limit path can still patch RATE_LIMIT_MAX_REQUESTS
+    to a low value and the in-memory bucket will respect it.
+    """
+    buckets: dict[str, deque[float]] = {}
+
+    async def _in_memory_slot(user_id: str) -> bool:
+        now = monotonic()
+        bucket = buckets.setdefault(user_id, deque())
+        while bucket and now - bucket[0] >= _gw.RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        if len(bucket) >= _gw.RATE_LIMIT_MAX_REQUESTS:
+            return False
+        bucket.append(now)
+        return True
+
+    mocker.patch(
+        "app.services.ai_gateway_service._consume_rate_limit_slot",
+        side_effect=_in_memory_slot,
+    )
 
 
 def _credits_status(

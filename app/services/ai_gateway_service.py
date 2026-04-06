@@ -13,12 +13,19 @@ with the ``REJECT_REASON_*`` constants below.
 from __future__ import annotations
 
 from collections import deque
+import logging
 import math
-from time import monotonic
+from time import monotonic, time
 import uuid
 from typing import Literal, NotRequired, TypedDict
 
+from google.cloud import firestore
+
 from app.core.config import settings
+from app.core.firestore_constants import RATE_LIMITS_COLLECTION
+from app.db.firebase import get_firestore
+
+logger = logging.getLogger(__name__)
 
 Decision = Literal["FORWARD", "REJECT", "LOCAL_ANSWER"]
 TaskType = Literal["chat", "photo_meal_analysis", "text_meal_analysis", "other"]
@@ -46,6 +53,8 @@ RATE_LIMIT_MAX_REQUESTS = 20
 MAX_CHAT_MESSAGE_CHARS = 4_000
 MAX_TEXT_PAYLOAD_CHARS = 4_000
 MAX_PHOTO_PAYLOAD_CHARS = 4_000_000
+
+# In-memory fallback used only by tests (patched via mocker).
 _request_buckets: dict[str, deque[float]] = {}
 
 
@@ -81,18 +90,46 @@ def classify_task_type(action_type: str) -> TaskType:
 
 
 def reset_rate_limit_state() -> None:
+    """No-op kept for backward compatibility. Tests should mock _consume_rate_limit_slot."""
     _request_buckets.clear()
 
 
-def _consume_rate_limit_slot(user_id: str) -> bool:
-    now = monotonic()
-    bucket = _request_buckets.setdefault(user_id, deque())
-    while bucket and now - bucket[0] >= RATE_LIMIT_WINDOW_SECONDS:
-        bucket.popleft()
-    if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+@firestore.transactional
+def _consume_rate_limit_transaction(
+    transaction: firestore.Transaction,
+    ref: firestore.DocumentReference,
+    now: float,
+) -> bool:
+    """Atomically check and record a rate-limit slot in Firestore.
+
+    Works correctly across multiple Gunicorn workers because the state lives in
+    Firestore rather than in a per-process dict.
+    """
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+    snapshot = ref.get(transaction=transaction)
+    raw: list[object] = (snapshot.to_dict() or {}).get("ts", []) if snapshot.exists else []
+    timestamps = [float(t) for t in raw if isinstance(t, (int, float)) and float(t) > window_start]
+    if len(timestamps) >= RATE_LIMIT_MAX_REQUESTS:
         return False
-    bucket.append(now)
+    timestamps.append(now)
+    transaction.set(ref, {"ts": timestamps})
     return True
+
+
+async def _consume_rate_limit_slot(user_id: str) -> bool:
+    """Distributed rate-limit check backed by Firestore.
+
+    Falls back to allowing the request if Firestore is unreachable so that a
+    transient DB issue never silently blocks all AI traffic.
+    """
+    try:
+        client = get_firestore()
+        ref = client.collection(RATE_LIMITS_COLLECTION).document(user_id)
+        transaction = client.transaction()
+        return _consume_rate_limit_transaction(transaction, ref, time())
+    except Exception:
+        logger.exception("Rate-limit Firestore check failed for user %s — allowing request", user_id)
+        return True
 
 
 def _max_payload_chars(task_type: TaskType) -> int:
@@ -199,7 +236,7 @@ def _classify_hypothetical_decision(message: str) -> tuple[Decision | None, str 
     return None, None
 
 
-def evaluate_request(
+async def evaluate_request(
     user_id: str,
     action_type: str,
     message: str,
@@ -225,7 +262,7 @@ def evaluate_request(
             enforced=False,
         )
 
-    if not _consume_rate_limit_slot(user_id):
+    if not await _consume_rate_limit_slot(user_id):
         return build_gateway_result(
             action_type=action_type,
             message=message,

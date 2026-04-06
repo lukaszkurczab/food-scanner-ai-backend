@@ -369,7 +369,7 @@ async def ask_ai(
     language = _resolve_language(request)
     action_type = "chat"
     request_id = _resolve_request_id(http_request)
-    gateway_result = ai_gateway_service.evaluate_request(
+    gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         action_type,
         request.message,
@@ -422,7 +422,7 @@ async def analyze_photo_ai(
     started_at = perf_counter()
     user_id = current_user.uid
     gateway_message = _safe_photo_gateway_message(request.imageBase64)
-    gateway_result = ai_gateway_service.evaluate_request(
+    gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         "photo_analysis",
         gateway_message,
@@ -464,7 +464,7 @@ async def analyze_text_meal_ai(
     started_at = perf_counter()
     user_id = current_user.uid
     gateway_message = request.payload.model_dump_json(exclude_none=True)
-    gateway_result = ai_gateway_service.evaluate_request(
+    gateway_result = await ai_gateway_service.evaluate_request(
         user_id,
         "text_meal_analysis",
         gateway_message,

@@ -1,4 +1,5 @@
 from datetime import datetime
+import hmac
 
 from fastapi import APIRouter, Header, HTTPException, status
 
@@ -40,7 +41,9 @@ def _verify_webhook_secret(
     if extracted:
         candidates.append(extracted)
 
-    if expected_secret not in candidates:
+    if not any(
+        hmac.compare_digest(expected_secret.encode(), c.encode()) for c in candidates
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook signature",
