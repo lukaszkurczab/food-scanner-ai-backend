@@ -101,7 +101,7 @@ def get_firestore() -> firestore.Client:
     Use "(default)" for production and "fitaly-smoke" for the staging environment.
     """
     app = init_firebase()
-    return admin_firestore.client(app=app, database_id=settings.FIRESTORE_DATABASE_ID)
+    return admin_firestore.client(app=app, database_id=settings.FIRESTORE_DATABASE_ID)  # type: ignore[call-arg]
 
 
 @lru_cache()

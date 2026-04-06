@@ -306,7 +306,7 @@ def _award_streak_badges(
 
     badge_collection = _badge_collection(client, user_id)
     refs = [badge_collection.document(spec["id"]) for _, spec in eligible]
-    existing_ids = {snap.id for snap in client.get_all(refs) if snap.exists}
+    existing_ids = {snap.id for snap in client.get_all(refs) if snap.exists}  # type: ignore[attr-defined]
 
     unlocked_at = int(datetime.now(timezone.utc).timestamp() * 1000)
     awarded_badges: list[str] = []
