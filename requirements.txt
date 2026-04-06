@@ -10,7 +10,7 @@ pydantic-settings==2.13.1
 
 # Google / Firebase
 google-cloud-firestore==2.26.0
-firebase-admin==6.6.0
+firebase-admin==6.9.0
 
 # AI SDK
 openai==1.61.1
