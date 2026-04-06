@@ -133,6 +133,7 @@ Every HTTP response includes `X-Request-ID`.  Use it to correlate client failure
 ## Operator docs
 
 - Launch Runbook (mobile repo): `../fitaly/docs/launch-runbook.md` — Go/No-Go, rollback matrix, kill-switch strategy
+- [Firestore Backup and Restore Runbook](./docs/firestore-backup-restore.md) — backup cadence, export/import commands, and restore drill checklist
 - [Coach Insights v1 Semantics](./docs/coach-insights-v1.md) — response contract, failure handling, telemetry allowlist
 - [Coach Insights v1 Rollout](./docs/coach-insights-v1-rollout.md) — rollout preconditions, verification, rollback behavior
 - [Smart Reminders v1 Semantics](./docs/smart-reminders-v1.md) — decision contract, suppression semantics, telemetry allowlist
