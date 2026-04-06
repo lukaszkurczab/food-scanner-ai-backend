@@ -96,9 +96,12 @@ def get_firestore() -> firestore.Client:
     Memoization ensures the client is created only once per process, which keeps
     SDK startup centralized and avoids duplicate initialization paths across the
     application.
+
+    The target Firestore database is controlled by FIRESTORE_DATABASE_ID.
+    Use "(default)" for production and "fitaly-smoke" for the staging environment.
     """
     app = init_firebase()
-    return admin_firestore.client(app=app)
+    return admin_firestore.client(app=app, database_id=settings.FIRESTORE_DATABASE_ID)
 
 
 @lru_cache()

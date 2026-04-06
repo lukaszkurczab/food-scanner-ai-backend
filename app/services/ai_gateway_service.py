@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import deque
 import logging
 import math
-from time import monotonic, time
+from time import time
 import uuid
 from typing import Literal, NotRequired, TypedDict
 

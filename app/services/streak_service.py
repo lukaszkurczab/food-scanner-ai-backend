@@ -296,21 +296,27 @@ def _award_streak_badges(
     if current_streak <= 0:
         return []
 
+    eligible = [
+        (milestone, STREAK_BADGE_SPECS[milestone])
+        for milestone in STREAK_MILESTONES
+        if current_streak >= milestone
+    ]
+    if not eligible:
+        return []
+
     badge_collection = _badge_collection(client, user_id)
-    awarded_badges: list[str] = []
+    refs = [badge_collection.document(spec["id"]) for _, spec in eligible]
+    existing_ids = {snap.id for snap in client.get_all(refs) if snap.exists}
+
     unlocked_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+    awarded_badges: list[str] = []
+    batch = client.batch()
 
-    for milestone in STREAK_MILESTONES:
-        if current_streak < milestone:
+    for milestone, spec in eligible:
+        if spec["id"] in existing_ids:
             continue
-
-        spec = STREAK_BADGE_SPECS[milestone]
-        badge_ref = badge_collection.document(spec["id"])
-        badge_snapshot = badge_ref.get()
-        if badge_snapshot.exists:
-            continue
-
-        badge_ref.set(
+        batch.set(
+            badge_collection.document(spec["id"]),
             {
                 "id": spec["id"],
                 "type": "streak",
@@ -323,6 +329,9 @@ def _award_streak_badges(
             merge=True,
         )
         awarded_badges.append(spec["id"])
+
+    if awarded_badges:
+        batch.commit()
 
     return awarded_badges
 
