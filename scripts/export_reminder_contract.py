@@ -25,7 +25,7 @@ from typing import get_args
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.schemas.reminders import (
+from app.schemas.reminders import (  # noqa: E402
     NOOP_REASON_CODES,
     SEND_REASON_CODES,
     SUPPRESS_REASON_CODES,

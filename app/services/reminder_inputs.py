@@ -7,7 +7,7 @@ from typing import Any
 from app.core.datetime_utils import ensure_utc_datetime, parse_flexible_datetime
 from app.services.meal_service import list_changes, list_history
 from app.services.notification_service import list_notifications
-from app.services.reminder_decision_store import DailySendCountResult, get_daily_send_count
+from app.services.reminder_decision_store import get_daily_send_count
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.reminder_rule_engine import (
     RECENT_ACTIVITY_SUPPRESSION_MIN,
