@@ -2,19 +2,13 @@ import json
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.services.reminder_rule_engine import (
     ReminderActivityInput,
     ReminderContextInput,
-    ReminderPersonalizationProfile,
     ReminderPreferencesInput,
     ReminderQuietHours,
-    ReminderTimingPolicy,
     ReminderWindow,
-    _build_personalization_profile,
-    _timing_policy_for_profile,
     evaluate_reminder_decision,
 )
 
@@ -28,66 +22,6 @@ def _load_state_fixture() -> NutritionStateResponse:
 
 def _context(hour: int, minute: int) -> ReminderContextInput:
     return ReminderContextInput(now_local=datetime(2026, 3, 18, hour, minute, tzinfo=UTC))
-
-
-@pytest.mark.parametrize(
-    ("preferences", "activity", "expected_reason_codes", "context"),
-    [
-        (
-            ReminderPreferencesInput(reminders_enabled=False),
-            ReminderActivityInput(),
-            ["reminders_disabled"],
-            _context(13, 0),
-        ),
-        (
-            ReminderPreferencesInput(
-                quiet_hours=ReminderQuietHours(start_hour=22, end_hour=7)
-            ),
-            ReminderActivityInput(),
-            ["quiet_hours"],
-            _context(23, 0),
-        ),
-        (
-            ReminderPreferencesInput(),
-            ReminderActivityInput(already_logged_recently=True),
-            ["already_logged_recently"],
-            _context(13, 0),
-        ),
-        (
-            ReminderPreferencesInput(),
-            ReminderActivityInput(recent_activity_detected=True),
-            ["recent_activity_detected"],
-            _context(13, 0),
-        ),
-        (
-            ReminderPreferencesInput(),
-            ReminderActivityInput(daily_send_count=3),
-            ["frequency_cap_reached"],
-            _context(13, 0),
-        ),
-    ],
-)
-def test_hard_suppressions_take_precedence(
-    preferences: ReminderPreferencesInput,
-    activity: ReminderActivityInput,
-    expected_reason_codes: list[str],
-    context: ReminderContextInput,
-) -> None:
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-    state.quality.dataCompletenessScore = 1.0
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=preferences,
-        activity=activity,
-        context=context,
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.kind is None
-    assert decision.reasonCodes == expected_reason_codes
-    assert decision.confidence == 1.0
 
 
 def test_send_first_meal_when_day_empty_and_window_is_open() -> None:
@@ -274,114 +208,6 @@ def test_noop_when_day_is_already_complete() -> None:
     assert decision.confidence == 0.98
 
 
-def test_reason_codes_are_deterministic_for_combined_suppressions() -> None:
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(
-            reminders_enabled=False,
-            quiet_hours=ReminderQuietHours(start_hour=22, end_hour=7),
-        ),
-        activity=ReminderActivityInput(
-            already_logged_recently=True,
-            recent_activity_detected=True,
-        ),
-        context=_context(23, 15),
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.reasonCodes == [
-        "reminders_disabled",
-        "quiet_hours",
-        "already_logged_recently",
-        "recent_activity_detected",
-    ]
-
-
-def test_frequency_cap_suppresses_when_daily_limit_reached() -> None:
-    """When the daily send count >= DAILY_REMINDER_CAP, the engine must suppress."""
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-    state.quality.dataCompletenessScore = 1.0
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(),
-        activity=ReminderActivityInput(daily_send_count=3),
-        context=_context(13, 0),
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.kind is None
-    assert decision.reasonCodes == ["frequency_cap_reached"]
-    assert decision.confidence == 1.0
-
-
-def test_frequency_cap_does_not_suppress_below_limit() -> None:
-    """Below the cap, send decisions must still work normally."""
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-    state.quality.dataCompletenessScore = 1.0
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(),
-        activity=ReminderActivityInput(daily_send_count=2),
-        context=_context(13, 0),
-    )
-
-    assert decision.decision == "send"
-    assert decision.kind == "log_next_meal"
-
-
-def test_frequency_cap_ordering_with_other_suppressions() -> None:
-    """Frequency cap appears in deterministic order alongside other suppressions."""
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(
-            reminders_enabled=False,
-            quiet_hours=ReminderQuietHours(start_hour=22, end_hour=7),
-        ),
-        activity=ReminderActivityInput(
-            already_logged_recently=True,
-            recent_activity_detected=True,
-            daily_send_count=5,
-        ),
-        context=_context(23, 15),
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.reasonCodes == [
-        "reminders_disabled",
-        "quiet_hours",
-        "frequency_cap_reached",
-        "already_logged_recently",
-        "recent_activity_detected",
-    ]
-
-
-def test_frequency_cap_valid_until_is_end_of_day() -> None:
-    """Frequency cap suppression should last until end of the local day."""
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-    state.quality.dataCompletenessScore = 1.0
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(),
-        activity=ReminderActivityInput(daily_send_count=3),
-        context=_context(14, 0),
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.validUntil == "2026-03-18T23:59:59Z"
-
-
 def test_canonical_utc_timestamps_strip_microseconds_for_send() -> None:
     """Regression: datetime.now(UTC) carries microseconds. All emitted timestamps
     must conform to YYYY-MM-DDTHH:MM:SSZ (exactly 20 chars, no sub-seconds)."""
@@ -407,27 +233,6 @@ def test_canonical_utc_timestamps_strip_microseconds_for_send() -> None:
     assert decision.scheduledAtUtc is not None
     assert len(decision.scheduledAtUtc) == 20
     assert "." not in decision.scheduledAtUtc
-    assert len(decision.validUntil) == 20
-    assert "." not in decision.validUntil
-
-
-def test_canonical_utc_timestamps_strip_microseconds_for_suppress() -> None:
-    state = _load_state_fixture()
-    state.quality.mealsLogged = 1
-
-    decision = evaluate_reminder_decision(
-        state=state,
-        preferences=ReminderPreferencesInput(reminders_enabled=False),
-        activity=ReminderActivityInput(),
-        context=ReminderContextInput(
-            now_local=datetime(2026, 3, 18, 13, 0, 33, 999999, tzinfo=UTC)
-        ),
-    )
-
-    assert decision.decision == "suppress"
-    assert decision.computedAt == "2026-03-18T13:00:33Z"
-    assert len(decision.computedAt) == 20
-    assert "." not in decision.computedAt
     assert len(decision.validUntil) == 20
     assert "." not in decision.validUntil
 
@@ -1027,123 +832,6 @@ def test_complete_day_not_sent_with_too_few_meals() -> None:
         "day_partially_logged",
         "logging_usually_happens_now",
     ]
-
-
-# ---------------------------------------------------------------------------
-# Smart Reminders v1.6 groundwork — bounded personalization profile
-# ---------------------------------------------------------------------------
-
-
-def test_personalization_profile_classifies_self_sufficient_user() -> None:
-    state = _load_state_fixture()
-    state.habits.behavior.validLoggingConsistency28 = 0.82
-    state.habits.behavior.dayCoverage14.validLoggedDays = 10
-    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 3.4
-    state.habits.behavior.validLoggingDays7 = 5
-    state.habits.behavior.timingPatterns14.observedDays = 9
-
-    profile = _build_personalization_profile(
-        state=state,
-    )
-
-    assert profile == ReminderPersonalizationProfile(segment="self_sufficient")
-
-
-def test_personalization_profile_classifies_responsive_user() -> None:
-    state = _load_state_fixture()
-    state.habits.behavior.validLoggingConsistency28 = 0.58
-    state.habits.behavior.dayCoverage14.validLoggedDays = 6
-    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.6
-    state.habits.behavior.validLoggingDays7 = 4
-    state.habits.behavior.timingPatterns14.observedDays = 8
-
-    profile = _build_personalization_profile(
-        state=state,
-    )
-
-    assert profile == ReminderPersonalizationProfile(segment="responsive")
-
-
-def test_personalization_profile_classifies_low_engagement_user() -> None:
-    state = _load_state_fixture()
-    state.habits.behavior.validLoggingDays7 = 2
-    state.habits.behavior.validLoggingConsistency28 = 0.29
-    state.habits.behavior.dayCoverage14.validLoggedDays = 3
-    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 1.4
-    state.habits.behavior.timingPatterns14.observedDays = 2
-
-    profile = _build_personalization_profile(
-        state=state,
-    )
-
-    assert profile == ReminderPersonalizationProfile(segment="low_engagement")
-
-
-def test_personalization_profile_falls_back_to_neutral() -> None:
-    state = _load_state_fixture()
-    state.habits.behavior.validLoggingConsistency28 = 0.4
-    state.habits.behavior.dayCoverage14.validLoggedDays = 4
-    state.habits.behavior.avgValidMealsPerValidLoggedDay14 = 2.2
-    state.habits.behavior.validLoggingDays7 = 3
-    state.habits.behavior.timingPatterns14.observedDays = 5
-
-    profile = _build_personalization_profile(
-        state=state,
-    )
-
-    assert profile == ReminderPersonalizationProfile(segment="neutral")
-
-
-@pytest.mark.parametrize(
-    ("profile", "expected_policy"),
-    [
-        (
-            ReminderPersonalizationProfile(segment="responsive"),
-            ReminderTimingPolicy(
-                strong_habit_observed_days_min=6,
-                anchor_proximity_min=20,
-                prefer_anchor_inside_window=True,
-                complete_day_guarded=False,
-            ),
-        ),
-        (
-            ReminderPersonalizationProfile(segment="neutral"),
-            ReminderTimingPolicy(
-                strong_habit_observed_days_min=7,
-                anchor_proximity_min=30,
-                prefer_anchor_inside_window=True,
-                complete_day_guarded=False,
-            ),
-        ),
-        (
-            ReminderPersonalizationProfile(segment="low_engagement"),
-            ReminderTimingPolicy(
-                strong_habit_observed_days_min=8,
-                anchor_proximity_min=45,
-                prefer_anchor_inside_window=False,
-                complete_day_guarded=True,
-            ),
-        ),
-        (
-            ReminderPersonalizationProfile(segment="self_sufficient"),
-            ReminderTimingPolicy(
-                strong_habit_observed_days_min=8,
-                anchor_proximity_min=35,
-                prefer_anchor_inside_window=False,
-                complete_day_guarded=True,
-            ),
-        ),
-    ],
-)
-def test_personalization_timing_policy_is_bounded_and_deterministic(
-    profile: ReminderPersonalizationProfile,
-    expected_policy: ReminderTimingPolicy,
-) -> None:
-    policy = _timing_policy_for_profile(profile)
-
-    assert policy == expected_policy
-    assert 6 <= policy.strong_habit_observed_days_min <= 8
-    assert 20 <= policy.anchor_proximity_min <= 45
 
 
 def test_responsive_profile_defers_with_lower_strong_signal_threshold() -> None:

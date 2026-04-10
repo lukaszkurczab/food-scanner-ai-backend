@@ -13,8 +13,13 @@ from app.services.ai_gateway_service import (
     GUARD_REASON_PAYLOAD_TOO_LARGE,
     GUARD_REASON_RATE_LIMITED,
     HYPOTHESIS_TRIVIAL_GREETING,
+    LOCAL_HEADROOM,
+    RATE_LIMIT_MAX_REQUESTS,
     REJECT_REASON_OFF_TOPIC,
     REJECT_REASON_TOO_SHORT,
+    _LOCAL_BUCKET_LOCK,
+    _consume_rate_limit_slot,
+    _local_buckets,
     classify_task_type,
     evaluate_request,
     reset_rate_limit_state,
@@ -181,6 +186,41 @@ async def test_evaluate_request_rate_limits_per_user(mocker: MockerFixture) -> N
     assert second["enforced"] is True
 
 
+def test_fast_path_skips_firestore_when_below_headroom(mocker: MockerFixture) -> None:
+    """Requests well below the limit must not call Firestore."""
+    reset_rate_limit_state()
+    mock_tx = mocker.patch(
+        "app.services.ai_gateway_service._consume_rate_limit_transaction"
+    )
+    import asyncio
+
+    for _ in range(RATE_LIMIT_MAX_REQUESTS - LOCAL_HEADROOM - 1):
+        result = asyncio.get_event_loop().run_until_complete(
+            _consume_rate_limit_slot("user_fast_path")
+        )
+        assert result is True
+    mock_tx.assert_not_called()
+
+
+def test_near_limit_calls_firestore(mocker: MockerFixture) -> None:
+    """Requests near the limit must consult Firestore."""
+    reset_rate_limit_state()
+    mock_tx = mocker.patch(
+        "app.services.ai_gateway_service._consume_rate_limit_transaction",
+        return_value=True,
+    )
+    mocker.patch("app.services.ai_gateway_service.get_firestore")
+    import asyncio
+
+    with _LOCAL_BUCKET_LOCK:
+        _local_buckets["user_near_limit"] = RATE_LIMIT_MAX_REQUESTS - LOCAL_HEADROOM
+    result = asyncio.get_event_loop().run_until_complete(
+        _consume_rate_limit_slot("user_near_limit")
+    )
+    assert result is True
+    mock_tx.assert_called_once()
+
+
 async def test_evaluate_request_rejects_chat_message_that_is_too_long(mocker: MockerFixture) -> None:
     mocker.patch("app.services.ai_gateway_service.MAX_CHAT_MESSAGE_CHARS", 10)
 
@@ -249,7 +289,7 @@ async def test_reject_result_contains_fields_needed_by_route() -> None:
 
 
 # ---------------------------------------------------------------------------
-# reset_rate_limit_state — backward-compat no-op
+# reset_rate_limit_state
 # ---------------------------------------------------------------------------
 
 

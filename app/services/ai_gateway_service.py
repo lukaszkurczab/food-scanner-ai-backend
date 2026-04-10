@@ -12,6 +12,7 @@ with the ``REJECT_REASON_*`` constants below.
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 import logging
 import math
@@ -57,12 +58,19 @@ HYPOTHESIS_TRIVIAL_GREETING = "TRIVIAL_GREETING"
 
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_REQUESTS = 20
+LOCAL_HEADROOM = 5
+LOCAL_BUCKET_TTL_S = 30.0
 MAX_CHAT_MESSAGE_CHARS = 4_000
 MAX_TEXT_PAYLOAD_CHARS = 4_000
 MAX_PHOTO_PAYLOAD_CHARS = 4_000_000
 
 # In-memory fallback used only by tests (patched via mocker).
 _request_buckets: dict[str, deque[float]] = {}
+_LOCAL_BUCKET_LOCK = threading.Lock()
+_local_buckets: TTLCache[str, int] = TTLCache(
+    maxsize=10_000,
+    ttl=LOCAL_BUCKET_TTL_S,
+)
 _FALLBACK_LOCK = threading.Lock()
 _FALLBACK_MAX_REQUESTS = 5
 _fallback_buckets: TTLCache[str, deque[float]] = TTLCache(
@@ -117,7 +125,9 @@ def classify_task_type(action_type: str) -> TaskType:
 
 
 def reset_rate_limit_state() -> None:
-    """No-op kept for backward compatibility. Tests should mock _consume_rate_limit_slot."""
+    """Reset in-memory limiter state used by tests."""
+    with _LOCAL_BUCKET_LOCK:
+        _local_buckets.clear()
     _request_buckets.clear()
 
 
@@ -149,17 +159,32 @@ async def _consume_rate_limit_slot(user_id: str) -> bool:
     Falls back to allowing the request if Firestore is unreachable so that a
     transient DB issue never silently blocks all AI traffic.
     """
+    with _LOCAL_BUCKET_LOCK:
+        local_count = _local_buckets.get(user_id, 0)
+
+    if local_count < RATE_LIMIT_MAX_REQUESTS - LOCAL_HEADROOM:
+        with _LOCAL_BUCKET_LOCK:
+            _local_buckets[user_id] = _local_buckets.get(user_id, 0) + 1
+        return True
+
+    db = get_firestore()
+    ref = db.collection(RATE_LIMITS_COLLECTION).document(user_id)
+    transaction = db.transaction()
     try:
-        client = get_firestore()
-        ref = client.collection(RATE_LIMITS_COLLECTION).document(user_id)
-        transaction = client.transaction()
-        return _consume_rate_limit_transaction(transaction, ref, time())
-    except Exception:
-        logger.warning(
-            "Rate-limit Firestore unavailable for user %s — applying local fallback limit",
-            user_id,
+        allowed = await asyncio.get_event_loop().run_in_executor(
+            None, _consume_rate_limit_transaction, transaction, ref, time()
         )
+    except Exception:
+        logger.warning("rate_limit.firestore_error; using fallback", exc_info=True)
         return _consume_fallback_slot(user_id)
+
+    if allowed:
+        with _LOCAL_BUCKET_LOCK:
+            _local_buckets[user_id] = min(
+                _local_buckets.get(user_id, 0) + 1,
+                RATE_LIMIT_MAX_REQUESTS,
+            )
+    return allowed
 
 
 def _max_payload_chars(task_type: TaskType) -> int:
