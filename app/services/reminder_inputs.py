@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.datetime_utils import ensure_utc_datetime, parse_flexible_datetime
@@ -18,6 +18,7 @@ from app.services.reminder_rule_engine import (
 )
 
 PREFERRED_WINDOW_RADIUS_MIN = 60
+UTC = timezone.utc
 
 
 @dataclass(frozen=True)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.datetime_utils import utc_now
 from app.schemas.weekly_reports import WeeklyReportPeriod, WeeklyReportResponse
 from app.services.weekly_report_aggregation import WeeklyAggregate, collect_weekly_aggregate
 from app.services.weekly_report_selection import build_weekly_report_content
 from app.services.weekly_report_signals import WeeklySignals, derive_weekly_signals
+
+UTC = timezone.utc
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 from typing import Any
 
@@ -32,6 +32,7 @@ from app.schemas.habits import (
 from app.services.nutrition_target_service import parse_target_kcal
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 VALID_MEAL_TYPES = ("breakfast", "lunch", "dinner", "snack", "other")
 LOW_CONFIDENCE_THRESHOLD = 0.5

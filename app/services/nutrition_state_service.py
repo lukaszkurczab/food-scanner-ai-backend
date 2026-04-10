@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 from typing import Any
 
@@ -42,6 +42,7 @@ from app.services.habit_signal_service import (
 from app.services.streak_service import get_streak
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 
 # ---------------------------------------------------------------------------

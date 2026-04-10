@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from math import ceil
 from typing import Iterable, Literal
 
@@ -10,6 +10,7 @@ from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision, ReminderReasonCode
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 FIRST_MEAL_WINDOW_RADIUS_MIN = 90
 NEXT_MEAL_WINDOW_RADIUS_MIN = 90

@@ -18,7 +18,12 @@ import math
 import threading
 from time import monotonic, time
 import uuid
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:  # pragma: no cover - Python < 3.11 compatibility
+    from typing_extensions import NotRequired
 
 from cachetools import TTLCache
 from google.cloud import firestore

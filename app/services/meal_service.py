@@ -2,8 +2,13 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
+
+try:
+    from typing import NotRequired
+except ImportError:  # pragma: no cover - Python < 3.11 compatibility
+    from typing_extensions import NotRequired
 
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 from typing import Any
 
@@ -17,6 +17,7 @@ from app.services.habit_signal_service import DailyAggregate, _aggregate_days
 from app.services.nutrition_state_service import _filter_core_meals, _load_bounded_meals
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 WEEKLY_REPORT_WINDOW_DAYS = 7
 WEEKLY_REPORT_READ_WINDOW_DAYS = 14

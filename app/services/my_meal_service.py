@@ -1,6 +1,6 @@
 """Backend-owned storage and uploads for saved meals."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any
 from uuid import uuid4
@@ -16,6 +16,7 @@ from app.services import meal_storage
 from app.services.meal_service import coerce_iso8601, normalize_meal_payload
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 
 def _my_meals_collection(user_id: str) -> firestore.CollectionReference:

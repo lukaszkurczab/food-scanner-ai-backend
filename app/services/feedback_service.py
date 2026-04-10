@@ -1,6 +1,6 @@
 """Backend-owned feedback submission flow."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any
 from uuid import uuid4
@@ -20,6 +20,7 @@ from app.db.firebase import (
 )
 
 logger = logging.getLogger(__name__)
+UTC = timezone.utc
 
 
 class FeedbackValidationError(Exception):

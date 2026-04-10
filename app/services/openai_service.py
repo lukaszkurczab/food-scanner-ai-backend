@@ -8,8 +8,13 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, NotRequired, TypedDict
+from typing import Any, TypedDict
 from typing import cast
+
+try:
+    from typing import NotRequired
+except ImportError:  # pragma: no cover - Python < 3.11 compatibility
+    from typing_extensions import NotRequired
 
 import openai
 

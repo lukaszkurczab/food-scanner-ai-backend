@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import datetime, time, timezone
 from typing import Callable, Sequence
 
 from app.schemas.coach import (
@@ -11,6 +11,8 @@ from app.schemas.coach import (
     CoachInsightType,
 )
 from app.schemas.nutrition_state import NutritionStateResponse
+
+UTC = timezone.utc
 
 MAX_COACH_INSIGHTS = 3
 
