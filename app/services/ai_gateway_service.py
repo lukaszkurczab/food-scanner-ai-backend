@@ -27,6 +27,8 @@ except ImportError:  # pragma: no cover - Python < 3.11 compatibility
     from typing_extensions import NotRequired
 
 from cachetools import TTLCache
+from firebase_admin.exceptions import FirebaseError
+from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import firestore
 
 from app.core.config import settings
@@ -174,7 +176,7 @@ async def _consume_rate_limit_slot(user_id: str) -> bool:
         allowed = await asyncio.get_event_loop().run_in_executor(
             None, _consume_rate_limit_transaction, transaction, ref, time()
         )
-    except Exception:
+    except (FirebaseError, GoogleAPICallError, RetryError):
         logger.warning("rate_limit.firestore_error; using fallback", exc_info=True)
         return _consume_fallback_slot(user_id)
 

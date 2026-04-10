@@ -15,6 +15,7 @@ from app.api.http_errors import (
 from app.core.config import settings
 from app.core.exceptions import (
     AiCreditsExhaustedError,
+    FirestoreServiceError,
     OpenAIServiceError,
 )
 from app.schemas.ai_ask import AiAskRequest, AiAskResponse
@@ -108,7 +109,8 @@ async def _log_gateway_result(
             tier=tier,
             credit_cost=credit_cost,
         )
-    except Exception:
+    # Intentionally broad: logging must never crash the request path.
+    except Exception:  # noqa: BLE001
         logger.exception(
             "Failed to persist AI gateway decision.",
             extra={"user_id": user_id, "action_type": action_type},
@@ -144,7 +146,7 @@ async def _reject_gateway_request(
     tier: Literal["free", "premium"] | None = None
     try:
         tier = (await ai_credits_service.get_credits_status(user_id)).tier
-    except Exception:
+    except FirestoreServiceError:
         logger.exception(
             "Failed to resolve AI tier for gateway reject log.",
             extra={"user_id": user_id, "action_type": action_type},
@@ -247,7 +249,7 @@ async def _refund_credits_after_ai_failure(
                 "tier": credits_status.tier,
             },
         )
-    except Exception:
+    except (FirestoreServiceError, ValueError):
         logger.exception(
             "Failed to refund AI credits after upstream failure.",
             extra={

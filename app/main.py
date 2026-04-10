@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_exception_handlers
+from app.api.middleware.ip_rate_limit import IpRateLimitMiddleware
 from app.api.middleware import request_logging
 from app.api.routes.webhooks import router as webhooks_router
 from app.api.router import api_router
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     )
     init_sentry()
     app.add_middleware(request_logging.RequestLoggingMiddleware)
+    app.add_middleware(IpRateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -112,7 +114,8 @@ def create_app() -> FastAPI:
 
     try:
         get_firestore()
-    except Exception:
+    # Intentionally broad: Firebase SDK can raise various internal errors on init.
+    except Exception:  # noqa: BLE001
         logger.exception("Failed to initialize Firebase during application startup.")
         if _is_production_environment():
             raise
