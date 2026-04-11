@@ -3,12 +3,14 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.schemas.nutrition_state import NutritionStateResponse
-from app.services.reminder_rule_engine import (
+from app.services.reminder_engine.types import (
     ReminderActivityInput,
     ReminderContextInput,
     ReminderPreferencesInput,
     ReminderQuietHours,
     ReminderWindow,
+)
+from app.services.reminder_rule_engine import (
     evaluate_reminder_decision,
 )
 

@@ -16,8 +16,12 @@ from app.core.exceptions import (
 )
 from app.schemas.nutrition_state import NutritionStateResponse
 from app.schemas.reminders import ReminderDecision
+from app.services.reminder_engine.types import (
+    ReminderActivityInput,
+    ReminderPreferencesInput,
+    ReminderQuietHours,
+)
 from app.services.reminder_inputs import ReminderInputs
-from app.services.reminder_rule_engine import ReminderActivityInput, ReminderPreferencesInput, ReminderQuietHours
 from app.services.reminder_service import get_reminder_decision
 
 FIXTURES_DIR = Path(__file__).parent / "contract_fixtures"

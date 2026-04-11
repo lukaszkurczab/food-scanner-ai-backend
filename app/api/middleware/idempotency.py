@@ -7,7 +7,7 @@ re-running the AI pipeline or deducting credits again.
 
 import json
 import threading
-from typing import Any
+from typing import Any, AsyncIterator, cast
 
 from cachetools import TTLCache
 from fastapi import Request
@@ -63,8 +63,15 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if response.status_code == 200:
             body_bytes = b""
             try:
-                async for chunk in response.body_iterator:
-                    body_bytes += chunk
+                body_content = getattr(response, "body", None)
+                if isinstance(body_content, (bytes, bytearray)):
+                    body_bytes = bytes(body_content)
+                else:
+                    body_iterator = getattr(response, "body_iterator", None)
+                    if body_iterator is None:
+                        return response
+                    async for chunk in cast(AsyncIterator[bytes], body_iterator):
+                        body_bytes += chunk
                 body = json.loads(body_bytes)
                 with _CACHE_LOCK:
                     _idempotency_cache[cache_key] = body

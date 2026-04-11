@@ -9,7 +9,11 @@ from app.services.reminder_engine.profile import classify_profile, policy_for_pr
 from app.services.reminder_engine.profile import _build_personalization_profile, _timing_policy_for_profile  # noqa: F401
 from app.services.reminder_engine.suppression import evaluate_suppression
 from app.services.reminder_engine.timing import _end_of_local_day, _normalize_local_datetime, _to_utc_z
-from app.services.reminder_engine.types import *  # noqa: F401,F403
+from app.services.reminder_engine.types import (
+    ReminderActivityInput,
+    ReminderContextInput,
+    ReminderPreferencesInput,
+)
 
 
 def evaluate_reminder_decision(

@@ -9,7 +9,7 @@ from app.services.meal_service import list_changes, list_history
 from app.services.notification_service import list_notifications
 from app.services.reminder_decision_store import get_daily_send_count
 from app.schemas.nutrition_state import NutritionStateResponse
-from app.services.reminder_rule_engine import (
+from app.services.reminder_engine.types import (
     RECENT_ACTIVITY_SUPPRESSION_MIN,
     ReminderActivityInput,
     ReminderPreferencesInput,

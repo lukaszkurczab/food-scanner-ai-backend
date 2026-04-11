@@ -14,8 +14,9 @@ from app.schemas.reminders import ReminderDecision
 from app.services.notification_service import get_notification_prefs
 from app.services.nutrition_state_service import get_nutrition_state
 from app.services.reminder_decision_store import record_send_decision_if_new
+from app.services.reminder_engine.types import ReminderContextInput
 from app.services.reminder_inputs import build_reminder_inputs
-from app.services.reminder_rule_engine import ReminderContextInput, evaluate_reminder_decision
+from app.services.reminder_rule_engine import evaluate_reminder_decision
 
 logger = logging.getLogger(__name__)
 

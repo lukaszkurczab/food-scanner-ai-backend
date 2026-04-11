@@ -419,11 +419,13 @@ def test_cap_reflects_unique_opportunities_not_call_count() -> None:
     from pathlib import Path
 
     from app.schemas.nutrition_state import NutritionStateResponse
-    from app.services.reminder_rule_engine import (
+    from app.services.reminder_engine.types import (
         DAILY_REMINDER_CAP,
         ReminderActivityInput,
         ReminderContextInput,
         ReminderPreferencesInput,
+    )
+    from app.services.reminder_rule_engine import (
         evaluate_reminder_decision,
     )
 

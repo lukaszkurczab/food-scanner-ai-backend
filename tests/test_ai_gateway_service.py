@@ -195,9 +195,7 @@ def test_fast_path_skips_firestore_when_below_headroom(mocker: MockerFixture) ->
     import asyncio
 
     for _ in range(RATE_LIMIT_MAX_REQUESTS - LOCAL_HEADROOM - 1):
-        result = asyncio.get_event_loop().run_until_complete(
-            _consume_rate_limit_slot("user_fast_path")
-        )
+        result = asyncio.run(_consume_rate_limit_slot("user_fast_path"))
         assert result is True
     mock_tx.assert_not_called()
 
@@ -214,9 +212,7 @@ def test_near_limit_calls_firestore(mocker: MockerFixture) -> None:
 
     with _LOCAL_BUCKET_LOCK:
         _local_buckets["user_near_limit"] = RATE_LIMIT_MAX_REQUESTS - LOCAL_HEADROOM
-    result = asyncio.get_event_loop().run_until_complete(
-        _consume_rate_limit_slot("user_near_limit")
-    )
+    result = asyncio.run(_consume_rate_limit_slot("user_near_limit"))
     assert result is True
     mock_tx.assert_called_once()
 
