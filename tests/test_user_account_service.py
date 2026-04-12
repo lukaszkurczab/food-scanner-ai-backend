@@ -10,8 +10,42 @@ from app.services import user_account_service
 from app.services.user_account_service import (
     AvatarMetadataValidationError,
     EmailValidationError,
+    OnboardingUsernameUnavailableError,
+    OnboardingValidationError,
     UserProfileValidationError,
 )
+
+
+class FakeTransaction:
+    def __init__(self) -> None:
+        self._id = b"transaction-id"
+        self._max_attempts = 1
+        self._read_only = False
+        self.set_calls: list[tuple[object, dict[str, object], bool | None]] = []
+        self.delete_calls: list[object] = []
+
+    def _begin(self, *args, **kwargs) -> None:
+        return None
+
+    def _commit(self) -> list[object]:
+        return []
+
+    def _rollback(self) -> None:
+        return None
+
+    def _clean_up(self) -> None:
+        return None
+
+    def set(
+        self,
+        document_ref: object,
+        data: dict[str, object],
+        merge: bool | None = None,
+    ) -> None:
+        self.set_calls.append((document_ref, data, merge))
+
+    def delete(self, document_ref: object) -> None:
+        self.delete_calls.append(document_ref)
 
 
 def _build_client(mocker: MockerFixture):
@@ -412,6 +446,124 @@ def test_upsert_user_profile_data_rejects_forbidden_fields(
                 "user-1",
                 {"username": "neo"},
                 auth_email="user-1@example.com",
+            )
+        )
+
+
+def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, usernames_collection_ref, user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    previous_username_ref = mocker.Mock()
+    usernames_collection_ref.document.side_effect = lambda key: (
+        previous_username_ref if key == "old-name" else username_ref
+    )
+    transaction = FakeTransaction()
+    client.transaction.return_value = transaction
+    username_ref.get.return_value = _build_snapshot(mocker, exists=False)
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"username": "old-name"},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    normalized_username, profile = asyncio.run(
+        user_account_service.initialize_onboarding_profile(
+            "user-1",
+            username=" Neo ",
+            language="pl-PL",
+            auth_email="user@example.com",
+        )
+    )
+
+    assert normalized_username == "neo"
+    assert profile["uid"] == "user-1"
+    assert profile["username"] == "neo"
+    assert profile["email"] == "user@example.com"
+    assert profile["language"] == "pl"
+    assert any(
+        call[0] is username_ref and call[1] == {"uid": "user-1"} and call[2] is True
+        for call in transaction.set_calls
+    )
+    assert any(
+        call[0] is user_ref and call[2] is True and call[1]["username"] == "neo"
+        for call in transaction.set_calls
+    )
+    assert transaction.delete_calls == [previous_username_ref]
+
+
+def test_initialize_onboarding_profile_is_idempotent_for_same_username_owner(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    transaction = FakeTransaction()
+    client.transaction.return_value = transaction
+    username_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "user-1"},
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "user-1", "username": "neo", "email": "existing@example.com"},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    normalized_username, profile = asyncio.run(
+        user_account_service.initialize_onboarding_profile(
+            "user-1",
+            username="neo",
+            language="en",
+            auth_email=None,
+        )
+    )
+
+    assert normalized_username == "neo"
+    assert profile["username"] == "neo"
+    assert profile["email"] == "existing@example.com"
+    assert transaction.delete_calls == []
+
+
+def test_initialize_onboarding_profile_raises_when_username_taken(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, _user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    transaction = FakeTransaction()
+    client.transaction.return_value = transaction
+    username_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "other-user"},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    with pytest.raises(OnboardingUsernameUnavailableError):
+        asyncio.run(
+            user_account_service.initialize_onboarding_profile(
+                "user-1",
+                username="neo",
+                language="pl",
+                auth_email="user@example.com",
+            )
+        )
+
+
+def test_initialize_onboarding_profile_rejects_short_username() -> None:
+    with pytest.raises(OnboardingValidationError):
+        asyncio.run(
+            user_account_service.initialize_onboarding_profile(
+                "user-1",
+                username="ab",
+                language="pl",
+                auth_email="user@example.com",
             )
         )
 

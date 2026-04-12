@@ -48,6 +48,7 @@ DELETE_SUBCOLLECTIONS = (
 )
 BATCH_DELETE_LIMIT = 500
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$")
+MIN_USERNAME_LENGTH = 3
 EDITABLE_PROFILE_FIELDS = frozenset(
     {
         "unitsSystem",
@@ -91,8 +92,27 @@ class UserProfileValidationError(Exception):
     """Raised when the user profile payload contains forbidden fields."""
 
 
+class OnboardingValidationError(Exception):
+    """Raised when onboarding input payload is invalid."""
+
+
+class OnboardingUsernameUnavailableError(Exception):
+    """Raised when onboarding username is already owned by another user."""
+
+
 def normalize_email(raw: object) -> str:
     return str(raw or "").strip()
+
+
+def _normalize_language(raw: object) -> str:
+    value = str(raw or "").strip().lower()
+    if value == "pl" or value.startswith("pl-"):
+        return "pl"
+    return "en"
+
+
+def _is_valid_username(username: str) -> bool:
+    return len(username) >= MIN_USERNAME_LENGTH
 
 
 def _validate_email(email: str) -> None:
@@ -111,6 +131,104 @@ def _utc_timestamp() -> str:
 
 def _utc_timestamp_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _build_onboarding_profile_document(
+    *,
+    user_id: str,
+    normalized_username: str,
+    normalized_language: str,
+    auth_email: str | None,
+    now_iso: str,
+    now_ms: int,
+    existing: dict[str, Any],
+) -> dict[str, Any]:
+    profile = dict(existing)
+
+    profile["uid"] = user_id
+    profile["username"] = normalized_username
+    if auth_email:
+        profile["email"] = auth_email
+
+    profile.setdefault("createdAt", now_ms)
+    profile.setdefault("lastLogin", now_iso)
+    profile.setdefault("plan", "free")
+    profile.setdefault("unitsSystem", "metric")
+    profile.setdefault("age", "")
+    profile.setdefault("sex", "female")
+    profile.setdefault("height", "")
+    profile.setdefault("heightInch", "")
+    profile.setdefault("weight", "")
+    profile.setdefault("preferences", [])
+    profile.setdefault("activityLevel", "moderate")
+    profile.setdefault("goal", "maintain")
+    profile.setdefault("calorieDeficit", None)
+    profile.setdefault("calorieSurplus", None)
+    profile.setdefault("chronicDiseases", [])
+    profile.setdefault("chronicDiseasesOther", "")
+    profile.setdefault("allergies", [])
+    profile.setdefault("allergiesOther", "")
+    profile.setdefault("lifestyle", "")
+    profile.setdefault("aiStyle", "none")
+    profile.setdefault("aiFocus", "none")
+    profile.setdefault("aiFocusOther", "")
+    profile.setdefault("aiNote", "")
+    profile.setdefault("surveyComplited", False)
+    profile.setdefault("surveyCompletedAt", None)
+    profile.setdefault("calorieTarget", 0)
+    profile.setdefault("syncState", "pending")
+    profile.setdefault("lastSyncedAt", "")
+    profile.setdefault("avatarUrl", "")
+    profile.setdefault("avatarLocalPath", "")
+    profile.setdefault("avatarlastSyncedAt", "")
+    profile.setdefault("darkTheme", False)
+    profile.setdefault("language", normalized_language)
+
+    return profile
+
+
+@firestore.transactional
+def _initialize_onboarding_profile_transaction(
+    transaction: firestore.Transaction,
+    *,
+    user_ref: firestore.DocumentReference,
+    usernames_collection: firestore.CollectionReference,
+    username_ref: firestore.DocumentReference,
+    user_id: str,
+    normalized_username: str,
+    normalized_language: str,
+    auth_email: str | None,
+    now_iso: str,
+    now_ms: int,
+) -> dict[str, Any]:
+    username_snapshot = username_ref.get(transaction=transaction)
+    if username_snapshot.exists:
+        username_data = username_snapshot.to_dict() or {}
+        owner_id = username_data.get("uid")
+        if isinstance(owner_id, str) and owner_id and owner_id != user_id:
+            raise OnboardingUsernameUnavailableError("Username unavailable.")
+
+    user_snapshot = user_ref.get(transaction=transaction)
+    existing = dict(user_snapshot.to_dict() or {}) if user_snapshot.exists else {}
+    previous_username = normalize_username(existing.get("username"))
+
+    profile_document = _build_onboarding_profile_document(
+        user_id=user_id,
+        normalized_username=normalized_username,
+        normalized_language=normalized_language,
+        auth_email=auth_email,
+        now_iso=now_iso,
+        now_ms=now_ms,
+        existing=existing,
+    )
+
+    transaction.set(username_ref, {"uid": user_id}, merge=True)
+    transaction.set(user_ref, profile_document, merge=True)
+
+    if previous_username and previous_username != normalized_username:
+        transaction.delete(usernames_collection.document(previous_username))
+
+    return profile_document
 
 
 def _sanitize_profile_patch(payload: dict[str, Any]) -> dict[str, Any]:
@@ -261,6 +379,56 @@ async def upsert_user_profile_data(
         await streak_service.sync_streak_from_meals(user_id)
 
     return merged
+
+
+async def initialize_onboarding_profile(
+    user_id: str,
+    *,
+    username: str,
+    language: str | None = None,
+    auth_email: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    normalized_username = normalize_username(username)
+    if not _is_valid_username(normalized_username):
+        raise OnboardingValidationError(
+            f"Username must be at least {MIN_USERNAME_LENGTH} characters long."
+        )
+
+    normalized_language = _normalize_language(language)
+    normalized_email = normalize_email(auth_email)
+
+    client: firestore.Client = get_firestore()
+    users_collection = client.collection(USERS_COLLECTION)
+    usernames_collection = client.collection(USERNAMES_COLLECTION)
+    user_ref = users_collection.document(user_id)
+    username_ref = usernames_collection.document(normalized_username)
+    transaction = client.transaction()
+    now_iso = _utc_timestamp()
+    now_ms = _utc_timestamp_ms()
+
+    try:
+        profile = _initialize_onboarding_profile_transaction(
+            transaction,
+            user_ref=user_ref,
+            usernames_collection=usernames_collection,
+            username_ref=username_ref,
+            user_id=user_id,
+            normalized_username=normalized_username,
+            normalized_language=normalized_language,
+            auth_email=normalized_email or None,
+            now_iso=now_iso,
+            now_ms=now_ms,
+        )
+    except OnboardingUsernameUnavailableError:
+        raise
+    except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+        logger.exception(
+            "Failed to initialize onboarding profile.",
+            extra={"user_id": user_id, "username": normalized_username},
+        )
+        raise FirestoreServiceError("Failed to initialize onboarding profile.") from exc
+
+    return normalized_username, profile
 
 
 def _delete_documents_in_batches(

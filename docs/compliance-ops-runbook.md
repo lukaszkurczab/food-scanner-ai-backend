@@ -42,6 +42,16 @@ This runbook is implementation-focused and complements external legal documents 
    - Railway
 3. Validate that production Terms/Privacy URLs remain publicly reachable.
 
+## Release Evidence Packet (P0.6)
+
+Before public launch approval, attach one evidence packet that contains:
+
+1. telemetry retention snapshot (what is stored, where, for how long),
+2. current processor matrix (service, purpose, data class, region),
+3. DPA/SCC status snapshot for each external processor,
+4. privacy-policy vs implementation redline status,
+5. export/delete/store-disclosure links for the current RC.
+
 ## Incident Handling (Privacy-Relevant)
 
 1. Open Discord `launch-ops` immediately and ACK within 15 minutes.

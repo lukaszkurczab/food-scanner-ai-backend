@@ -32,6 +32,7 @@ def init_sentry() -> None:
         dsn=settings.SENTRY_DSN,
         environment=settings.SENTRY_ENVIRONMENT or settings.ENVIRONMENT,
         release=settings.VERSION,
+        send_default_pii=False,
         traces_sample_rate=0.1,
         integrations=[
             FastApiIntegration(),

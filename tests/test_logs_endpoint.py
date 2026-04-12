@@ -92,6 +92,46 @@ def test_logs_error_endpoint_rejects_oversized_context(mocker: MockerFixture) ->
     log_error.assert_not_called()
 
 
+def test_logs_error_endpoint_rejects_non_allowlisted_context_key(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v1/logs/error",
+        json={
+            "source": "mobile",
+            "message": "invalid context key",
+            "context": {"unknownKey": "value"},
+        },
+    )
+
+    assert response.status_code == 422
+    log_error.assert_not_called()
+
+
+def test_logs_error_endpoint_rejects_privacy_sensitive_context_key(
+    mocker: MockerFixture,
+) -> None:
+    reset_rate_limit_state()
+    log_error = mocker.patch("app.api.routes.logs.error_logger.log_error")
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v1/logs/error",
+        json={
+            "source": "mobile",
+            "message": "invalid context key",
+            "context": {"message": "raw-user-content"},
+        },
+    )
+
+    assert response.status_code == 422
+    log_error.assert_not_called()
+
+
 def test_logs_error_endpoint_returns_500_when_logger_fails(mocker: MockerFixture) -> None:
     reset_rate_limit_state()
     mocker.patch(

@@ -48,5 +48,6 @@ def test_init_sentry_uses_configured_sentry_environment(mocker: MockerFixture) -
     assert kwargs["dsn"] == "https://example@sentry.io/1"
     assert kwargs["environment"] == "staging"
     assert kwargs["release"] == "1.2.3"
+    assert kwargs["send_default_pii"] is False
     assert kwargs["traces_sample_rate"] == 0.1
     assert len(kwargs["integrations"]) == 2

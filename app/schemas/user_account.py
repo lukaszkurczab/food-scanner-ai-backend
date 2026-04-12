@@ -42,3 +42,14 @@ class UserProfileResponse(BaseModel):
 
 class UserProfileUpdateResponse(UserProfileResponse):
     updated: bool
+
+
+class UserOnboardingRequest(BaseModel):
+    username: str = Field(min_length=1)
+    language: str | None = Field(default=None)
+
+
+class UserOnboardingResponse(BaseModel):
+    username: str
+    profile: dict[str, Any]
+    updated: bool

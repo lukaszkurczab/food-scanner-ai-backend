@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.api.deps import AuthenticatedUser, get_required_authenticated_user
 from app.api.http_errors import raise_bad_request
@@ -8,6 +8,8 @@ from app.schemas.user_account import (
     DeleteAccountResponse,
     EmailPendingRequest,
     EmailPendingResponse,
+    UserOnboardingRequest,
+    UserOnboardingResponse,
     UserExportResponse,
     UserProfileResponse,
     UserProfileUpdateResponse,
@@ -16,6 +18,8 @@ from app.services import user_account_service
 from app.services.user_account_service import (
     AvatarMetadataValidationError,
     EmailValidationError,
+    OnboardingUsernameUnavailableError,
+    OnboardingValidationError,
     UserProfileValidationError,
 )
 
@@ -47,6 +51,35 @@ async def upsert_user_profile_me(
         raise_bad_request(exc)
 
     return UserProfileUpdateResponse(profile=profile, updated=True)
+
+
+@router.post("/users/me/onboarding", response_model=UserOnboardingResponse)
+async def initialize_user_onboarding_me(
+    request: UserOnboardingRequest,
+    current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
+) -> UserOnboardingResponse:
+    auth_email = current_user.claims.get("email")
+
+    try:
+        normalized_username, profile = await user_account_service.initialize_onboarding_profile(
+            current_user.uid,
+            username=request.username,
+            language=request.language,
+            auth_email=auth_email if isinstance(auth_email, str) else None,
+        )
+    except OnboardingValidationError as exc:
+        raise_bad_request(exc)
+    except OnboardingUsernameUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return UserOnboardingResponse(
+        username=normalized_username,
+        profile=profile,
+        updated=True,
+    )
 
 
 @router.post("/users/me/email-pending", response_model=EmailPendingResponse)
