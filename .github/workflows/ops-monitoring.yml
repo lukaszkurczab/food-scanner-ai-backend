@@ -18,11 +18,43 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       - name: Check smoke health endpoint
         run: bash scripts/check-health-endpoint.sh smoke https://fitaly-backend-smoke.up.railway.app/api/v1/health 3000
 
       - name: Check production health endpoint
         run: bash scripts/check-health-endpoint.sh production https://fitaly-backend-production.up.railway.app/api/v1/health 2000
+
+      - name: Resolve flow-monitoring secret availability
+        id: flow-secrets
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          SMOKE_EXPORT_TEST_EMAIL: ${{ secrets.SMOKE_EXPORT_TEST_EMAIL }}
+          SMOKE_EXPORT_TEST_PASSWORD: ${{ secrets.SMOKE_EXPORT_TEST_PASSWORD }}
+        run: |
+          if [[ -z "${FIREBASE_WEB_API_KEY}" || -z "${SMOKE_EXPORT_TEST_EMAIL}" || -z "${SMOKE_EXPORT_TEST_PASSWORD}" ]]; then
+            echo "::warning title=Flow checks skipped::Set FIREBASE_WEB_API_KEY + SMOKE_EXPORT_TEST_EMAIL + SMOKE_EXPORT_TEST_PASSWORD to enable flow-based monitoring."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check smoke flow contracts
+        if: ${{ steps.flow-secrets.outputs.enabled == 'true' }}
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          SMOKE_EXPORT_TEST_EMAIL: ${{ secrets.SMOKE_EXPORT_TEST_EMAIL }}
+          SMOKE_EXPORT_TEST_PASSWORD: ${{ secrets.SMOKE_EXPORT_TEST_PASSWORD }}
+        run: |
+          python scripts/check-flow-contracts.py \
+            --env smoke \
+            --base-url https://fitaly-backend-smoke.up.railway.app \
+            --max-latency-ms 5000 \
+            --weekly-expected-status 403
 
   notify-on-failure:
     name: Notify Discord on failure

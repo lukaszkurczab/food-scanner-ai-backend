@@ -22,15 +22,21 @@ This runbook defines the minimum production monitoring baseline for:
 2. It checks:
    - `GET /api/v1/health` on smoke
    - `GET /api/v1/health` on production
+   - authenticated smoke flow contracts (`scripts/check-flow-contracts.py`) when smoke secrets are configured:
+     - `GET /api/v1/users/me/export`
+     - `GET /api/v1/ai/credits`
+     - `GET /api/v2/users/me/reports/weekly` (expected `403 WEEKLY_REPORT_PREMIUM_REQUIRED` for free smoke user)
 3. It fails when:
    - HTTP status is not `200`
    - latency is over threshold
    - payload does not contain `status: "ok"` (or `healthy`)
+   - or flow contract status/payload checks fail
 
 ## Latency Thresholds
 
 - smoke health latency: `<= 3000ms`
 - production health latency: `<= 2000ms`
+- smoke flow contract latency (per endpoint): `<= 5000ms`
 
 If those thresholds fail repeatedly, treat as an incident candidate even when uptime is still present.
 
@@ -42,6 +48,7 @@ If those thresholds fail repeatedly, treat as an incident candidate even when up
 4. Sentry must be enabled on production (`SENTRY_DSN`, `SENTRY_ENVIRONMENT=production`).
 5. Any spike of API 5xx visible in Sentry should trigger manual investigation.
 6. Workflow-level notifications are sent by `OPS_ALERT_DISCORD_WEBHOOK_URL`; GitHub email stays fallback-only.
+7. If flow checks are skipped due to missing smoke secrets, treat it as monitoring debt and configure secrets immediately.
 
 ## Incident Triage Checklist
 

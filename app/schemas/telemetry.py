@@ -51,6 +51,7 @@ ALLOWED_TELEMETRY_EVENT_NAMES = frozenset(
         "onboarding_skip_confirmed",
         "onboarding_exit_action",
         "onboarding_option_selected",
+        "premium_state_evaluated",
     }
 )
 
@@ -126,6 +127,9 @@ ALLOWED_TELEMETRY_EVENT_PROPS: dict[str, frozenset[str]] = {
     "onboarding_skip_confirmed": frozenset({"step", "mode"}),
     "onboarding_exit_action": frozenset({"mode", "action"}),
     "onboarding_option_selected": frozenset({"step", "mode", "field", "value"}),
+    "premium_state_evaluated": frozenset(
+        {"source", "premium", "cacheState", "mismatch", "creditsTier"}
+    ),
 }
 
 ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
@@ -178,6 +182,20 @@ ALLOWED_TELEMETRY_EVENT_PROP_ENUM_VALUES: dict[
     },
     "onboarding_option_selected": {
         "mode": frozenset({"first", "refill"}),
+    },
+    "premium_state_evaluated": {
+        "source": frozenset(
+            {
+                "logged_out",
+                "billing_disabled",
+                "revenuecat_unconfigured",
+                "customer_info",
+                "cache_fallback",
+                "sync_validation",
+            }
+        ),
+        "cacheState": frozenset({"not_applicable", "hit_true", "hit_false", "miss"}),
+        "creditsTier": frozenset({"free", "premium", "unknown"}),
     },
 }
 

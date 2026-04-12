@@ -366,6 +366,69 @@ def test_telemetry_batch_rejects_unknown_props_for_event(
     assert firestore_client.storage == {}
 
 
+def test_telemetry_batch_accepts_premium_state_evaluated_event(
+    mocker: MockerFixture,
+    auth_headers,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "premium_state_evaluated",
+                "props": {
+                    "source": "customer_info",
+                    "premium": True,
+                    "cacheState": "hit_false",
+                    "mismatch": True,
+                    "creditsTier": "free",
+                },
+            }
+        ),
+        headers=auth_headers("user-123"),
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "acceptedCount": 1,
+        "duplicateCount": 0,
+        "rejectedCount": 0,
+        "rejectedEvents": [],
+    }
+
+
+def test_telemetry_batch_rejects_invalid_premium_state_source(
+    mocker: MockerFixture,
+) -> None:
+    reset_telemetry_state()
+    setup_telemetry_enabled(mocker, enabled=True)
+    firestore_client = FakeFirestoreClient()
+    mocker.patch("app.services.telemetry_service.get_firestore", return_value=firestore_client)
+    client = create_test_client()
+
+    response = client.post(
+        "/api/v2/telemetry/events/batch",
+        json=build_payload(
+            {
+                "name": "premium_state_evaluated",
+                "props": {
+                    "source": "unsupported_source",
+                    "premium": False,
+                    "cacheState": "miss",
+                },
+            }
+        ),
+    )
+
+    assert response.status_code == 422
+    assert firestore_client.storage == {}
+
+
 def test_telemetry_batch_accepts_coach_surface_events(
     mocker: MockerFixture,
 ) -> None:
