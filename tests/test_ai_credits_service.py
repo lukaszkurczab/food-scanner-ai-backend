@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
+from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from pytest_mock import MockerFixture
 
 from app.core.config import settings
@@ -278,6 +279,42 @@ def test_refresh_if_period_expired_clamps_end_of_month_anchor(mocker: MockerFixt
 
     assert status.periodStartAt == _iso_utc(2026, 2, 28)
     assert status.periodEndAt == _iso_utc(2026, 3, 28)
+
+
+def test_refresh_if_period_expired_normalizes_firestore_datetime_subclass(
+    mocker: MockerFixture,
+) -> None:
+    now = _iso_utc(2026, 4, 24)
+    client, _collection_ref, document_ref, _transactions_collection_ref = _build_client(mocker)
+    transaction = FakeTransaction()
+    client.transaction.return_value = transaction
+    document_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "userId": "user-1",
+            "tier": "free",
+            "balance": 2,
+            "allocation": settings.AI_CREDITS_FREE,
+            "periodStartAt": DatetimeWithNanoseconds(2026, 3, 23, tzinfo=timezone.utc),
+            "periodEndAt": DatetimeWithNanoseconds(2026, 4, 23, tzinfo=timezone.utc),
+            "renewalAnchorSource": "free_cycle_start",
+            "createdAt": DatetimeWithNanoseconds(2026, 3, 23, tzinfo=timezone.utc),
+            "updatedAt": DatetimeWithNanoseconds(2026, 3, 23, tzinfo=timezone.utc),
+        },
+    )
+
+    mocker.patch("app.services.ai_credits_service.get_firestore", return_value=client)
+    mocker.patch("app.services.ai_credits_service._utc_now", return_value=now)
+
+    status = asyncio.run(ai_credits_service.refresh_if_period_expired("user-1"))
+    written_document = transaction.set_calls[0][1]
+
+    assert status.balance == settings.AI_CREDITS_FREE
+    assert type(written_document["periodStartAt"]) is datetime
+    assert type(written_document["periodEndAt"]) is datetime
+    assert type(written_document["createdAt"]) is datetime
+    assert type(written_document["updatedAt"]) is datetime
 
 
 def test_start_premium_cycle_sets_premium_allocation_and_period(mocker: MockerFixture) -> None:

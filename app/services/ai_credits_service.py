@@ -30,7 +30,20 @@ Tier = Literal["free", "premium"]
 def _coerce_optional_datetime(value: object) -> datetime | None:
     if not isinstance(value, datetime):
         return None
-    return _ensure_utc_datetime(value)
+    normalized = _ensure_utc_datetime(value)
+    # Firestore may return datetime subclasses (for example DatetimeWithNanoseconds).
+    # Persisting these back can break serialization in some environments, so always
+    # canonicalize to the built-in datetime type.
+    return datetime(
+        normalized.year,
+        normalized.month,
+        normalized.day,
+        normalized.hour,
+        normalized.minute,
+        normalized.second,
+        normalized.microsecond,
+        tzinfo=normalized.tzinfo,
+    )
 
 
 
