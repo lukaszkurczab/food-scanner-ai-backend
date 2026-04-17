@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import pytest
-from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import FailedPrecondition, GoogleAPICallError
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -94,24 +94,43 @@ class _FakeQuery:
         return _FakeQuery(self._collection, [*self._filters, filter])
 
     def stream(self):
-        self._collection.calls.append(
-            [
-                (flt.field_path, flt.op_string, flt.value)
-                for flt in self._filters
-            ]
-        )
-        return self._collection.snapshots
+        call = [
+            (flt.field_path, flt.op_string, flt.value)
+            for flt in self._filters
+        ]
+        self._collection.calls.append(call)
+        if self._collection.fail_indexed_queries and any(field == "deleted" for field, _, _ in call):
+            if self._collection.lazy_index_failures:
+                return _LazyFailureIterator()
+            raise FailedPrecondition("The query requires an index.")
+        return iter(self._collection.snapshots)
 
 
 class _FakeMealsCollection:
     """Fake meals collection that supports where().where().stream() chains."""
 
-    def __init__(self, snapshots: list[object]) -> None:
+    def __init__(
+        self,
+        snapshots: list[object],
+        *,
+        fail_indexed_queries: bool = False,
+        lazy_index_failures: bool = False,
+    ) -> None:
         self.snapshots = snapshots
         self.calls: list[list[tuple[str, str, Any]]] = []
+        self.fail_indexed_queries = fail_indexed_queries
+        self.lazy_index_failures = lazy_index_failures
 
     def where(self, *, filter) -> _FakeQuery:
         return _FakeQuery(self, [filter])
+
+
+class _LazyFailureIterator:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise FailedPrecondition("The query requires an index.")
 
 
 def _make_snapshot(mocker: MockerFixture, meal: dict[str, Any], doc_id: str | None = None) -> Any:
@@ -127,6 +146,8 @@ def _mock_firestore(
     profile: dict[str, Any] | None,
     meals: list[dict[str, Any]],
     streak: dict[str, object] | None = None,
+    fail_indexed_queries: bool = False,
+    lazy_index_failures: bool = False,
 ):
     """Build a full mock Firestore client supporting bounded queries."""
     user_snapshot = mocker.Mock()
@@ -134,7 +155,11 @@ def _mock_firestore(
     user_snapshot.to_dict.return_value = profile or {}
 
     meal_snapshots = [_make_snapshot(mocker, m) for m in meals]
-    meals_collection = _FakeMealsCollection(meal_snapshots)
+    meals_collection = _FakeMealsCollection(
+        meal_snapshots,
+        fail_indexed_queries=fail_indexed_queries,
+        lazy_index_failures=lazy_index_failures,
+    )
 
     user_ref = mocker.Mock()
     user_ref.get.return_value = user_snapshot
@@ -551,6 +576,83 @@ def test_get_nutrition_state_uses_bounded_queries(mocker: MockerFixture) -> None
     assert second_call[1][1] == ">="
     assert second_call[2][0] == "timestamp"
     assert second_call[2][1] == "<"
+
+
+def test_get_nutrition_state_falls_back_when_index_is_missing(
+    mocker: MockerFixture,
+) -> None:
+    client, meals_collection = _mock_firestore(
+        mocker,
+        profile={"calorieTarget": 1800},
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T12:00:00Z",
+                kcal=400,
+                protein=20,
+            )
+        ],
+        fail_indexed_queries=True,
+    )
+    mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
+        return_value=_credits_status(),
+    )
+
+    response = asyncio.run(
+        nutrition_state_service.get_nutrition_state(
+            "user-1",
+            day_key="2026-03-18",
+            now=NOW,
+        )
+    )
+
+    assert response.consumed.kcal == 400
+    assert len(meals_collection.calls) == 4
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[1][0][0] == "dayKey"
+    assert all(field != "deleted" for field, _, _ in meals_collection.calls[1])
+    assert meals_collection.calls[2][0] == ("deleted", "==", False)
+    assert meals_collection.calls[3][0][0] == "timestamp"
+    assert all(field != "deleted" for field, _, _ in meals_collection.calls[3])
+
+
+def test_get_nutrition_state_falls_back_when_index_fails_during_iteration(
+    mocker: MockerFixture,
+) -> None:
+    client, meals_collection = _mock_firestore(
+        mocker,
+        profile={"calorieTarget": 1800},
+        meals=[
+            _meal(
+                meal_id="meal-1",
+                day_key="2026-03-18",
+                timestamp="2026-03-18T12:00:00Z",
+                kcal=400,
+                protein=20,
+            )
+        ],
+        fail_indexed_queries=True,
+        lazy_index_failures=True,
+    )
+    mocker.patch("app.services.nutrition_state_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.nutrition_state_service.ai_credits_service.get_credits_status",
+        return_value=_credits_status(),
+    )
+
+    response = asyncio.run(
+        nutrition_state_service.get_nutrition_state(
+            "user-1",
+            day_key="2026-03-18",
+            now=NOW,
+        )
+    )
+
+    assert response.consumed.kcal == 400
+    assert len(meals_collection.calls) == 4
 
 
 # ---------------------------------------------------------------------------

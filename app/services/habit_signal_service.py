@@ -16,6 +16,7 @@ from app.core.coercion import coerce_float, round_metric
 from app.core.datetime_utils import parse_flexible_datetime, utc_now
 from app.core.exceptions import FirestoreServiceError
 from app.core.firestore_constants import MEALS_SUBCOLLECTION, USERS_COLLECTION
+from app.core.firestore_query_fallback import stream_with_missing_index_fallback
 from app.db.firebase import get_firestore
 from app.schemas.habits import (
     CoachPriority,
@@ -498,14 +499,27 @@ def _load_recent_meals(
     start_ts = _serialize_day_start(start_day)
     end_ts = _serialize_day_start(end_day + timedelta(days=1))
 
-    # Read by canonical dayKey first, then add a bounded timestamp fallback for meals missing/invalid dayKey.
+    # Read by canonical dayKey first, then add a bounded timestamp fallback for
+    # meals missing/invalid dayKey. If the composite index for the deleted
+    # filter is unavailable, retry with the same bounded range and filter
+    # deleted meals during aggregation.
     snapshots_by_id: dict[str, dict[str, Any]] = {}
     day_key_query = (
         meals_collection.where(filter=FieldFilter("deleted", "==", False))
         .where(filter=FieldFilter("dayKey", ">=", start_day_key))
         .where(filter=FieldFilter("dayKey", "<=", end_day_key))
     )
-    for snapshot in day_key_query.stream():
+    day_key_fallback_query = (
+        meals_collection.where(filter=FieldFilter("dayKey", ">=", start_day_key))
+        .where(filter=FieldFilter("dayKey", "<=", end_day_key))
+    )
+    for snapshot in stream_with_missing_index_fallback(
+        indexed_query=day_key_query,
+        fallback_query=day_key_fallback_query,
+        logger=logger,
+        query_name="habit_signals.day_key_range",
+        extra={"computed_at": computed_at.isoformat()},
+    ):
         snapshots_by_id[snapshot.id] = dict(snapshot.to_dict() or {})
 
     timestamp_query = (
@@ -513,7 +527,17 @@ def _load_recent_meals(
         .where(filter=FieldFilter("timestamp", ">=", start_ts))
         .where(filter=FieldFilter("timestamp", "<", end_ts))
     )
-    for snapshot in timestamp_query.stream():
+    timestamp_fallback_query = (
+        meals_collection.where(filter=FieldFilter("timestamp", ">=", start_ts))
+        .where(filter=FieldFilter("timestamp", "<", end_ts))
+    )
+    for snapshot in stream_with_missing_index_fallback(
+        indexed_query=timestamp_query,
+        fallback_query=timestamp_fallback_query,
+        logger=logger,
+        query_name="habit_signals.timestamp_range",
+        extra={"computed_at": computed_at.isoformat()},
+    ):
         snapshots_by_id.setdefault(snapshot.id, dict(snapshot.to_dict() or {}))
 
     return list(snapshots_by_id.values())

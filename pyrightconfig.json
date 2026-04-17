@@ -1,15 +1,14 @@
 {
-  "include": [
-    "app",
-    "tests"
-  ],
-  "exclude": [
-    ".venv",
-    "__pycache__"
-  ],
+  "include": ["app", "tests"],
+  "exclude": [".venv", "__pycache__"],
   "stubPath": "typings",
   "pythonVersion": "3.11",
   "typeCheckingMode": "basic",
+  "reportUnknownMemberType": "error",
+  "reportUnknownVariableType": "error",
+  "reportUnknownArgumentType": "error",
+  "reportUnknownParameterType": "error",
+  "reportUnknownLambdaType": "error",
   "reportMissingTypeArgument": "error",
   "reportMissingTypeStubs": "none",
   "reportMissingModuleSource": "none"

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import pytest
-from google.api_core.exceptions import GoogleAPICallError
+from google.api_core.exceptions import FailedPrecondition, GoogleAPICallError
 from pytest_mock import MockerFixture
 
 from app.core.exceptions import FirestoreServiceError
@@ -64,22 +64,41 @@ class _FakeQuery:
         return _FakeQuery(self._collection, [*self._filters, filter])
 
     def stream(self):
-        self._collection.calls.append(
-            [
-                (flt.field_path, flt.op_string, flt.value)
-                for flt in self._filters
-            ]
-        )
-        return self._collection.snapshots
+        call = [
+            (flt.field_path, flt.op_string, flt.value)
+            for flt in self._filters
+        ]
+        self._collection.calls.append(call)
+        if self._collection.fail_indexed_queries and any(field == "deleted" for field, _, _ in call):
+            if self._collection.lazy_index_failures:
+                return _LazyFailureIterator()
+            raise FailedPrecondition("The query requires an index.")
+        return iter(self._collection.snapshots)
 
 
 class _FakeMealsCollection:
-    def __init__(self, snapshots: list[object]) -> None:
+    def __init__(
+        self,
+        snapshots: list[object],
+        *,
+        fail_indexed_queries: bool = False,
+        lazy_index_failures: bool = False,
+    ) -> None:
         self.snapshots = snapshots
         self.calls: list[list[tuple[str, str, Any]]] = []
+        self.fail_indexed_queries = fail_indexed_queries
+        self.lazy_index_failures = lazy_index_failures
 
     def where(self, *, filter) -> _FakeQuery:
         return _FakeQuery(self, [filter])
+
+
+class _LazyFailureIterator:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise FailedPrecondition("The query requires an index.")
 
 
 def test_day_grouping_prefers_day_key_over_timestamp() -> None:
@@ -519,6 +538,82 @@ def test_get_habit_signals_reads_firestore_and_returns_response(mocker: MockerFi
     assert meals_collection.calls[0][1][0] == "dayKey"
     assert meals_collection.calls[1][0] == ("deleted", "==", False)
     assert meals_collection.calls[1][1][0] == "timestamp"
+
+
+def test_get_habit_signals_falls_back_when_index_is_missing(
+    mocker: MockerFixture,
+) -> None:
+    user_snapshot = mocker.Mock()
+    user_snapshot.exists = True
+    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+
+    meal_snapshot = mocker.Mock()
+    meal_snapshot.to_dict.return_value = _meal(
+        meal_id="meal-1",
+        day_key="2026-03-18",
+        timestamp="2026-03-18T08:00:00Z",
+        kcal=1800,
+        protein=90,
+    )
+
+    meals_collection = _FakeMealsCollection([meal_snapshot], fail_indexed_queries=True)
+    user_ref = mocker.Mock()
+    user_ref.get.return_value = user_snapshot
+    user_ref.collection.return_value = meals_collection
+    client = mocker.Mock()
+    client.collection.return_value.document.return_value = user_ref
+
+    mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
+
+    response = asyncio.run(
+        habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
+    )
+
+    assert response.behavior.loggingDays7 == 1
+    assert len(meals_collection.calls) == 4
+    assert meals_collection.calls[0][0] == ("deleted", "==", False)
+    assert meals_collection.calls[1][0][0] == "dayKey"
+    assert all(field != "deleted" for field, _, _ in meals_collection.calls[1])
+    assert meals_collection.calls[2][0] == ("deleted", "==", False)
+    assert meals_collection.calls[3][0][0] == "timestamp"
+    assert all(field != "deleted" for field, _, _ in meals_collection.calls[3])
+
+
+def test_get_habit_signals_falls_back_when_index_fails_during_iteration(
+    mocker: MockerFixture,
+) -> None:
+    user_snapshot = mocker.Mock()
+    user_snapshot.exists = True
+    user_snapshot.to_dict.return_value = {"calorieTarget": 2000}
+
+    meal_snapshot = mocker.Mock()
+    meal_snapshot.to_dict.return_value = _meal(
+        meal_id="meal-1",
+        day_key="2026-03-18",
+        timestamp="2026-03-18T08:00:00Z",
+        kcal=1800,
+        protein=90,
+    )
+
+    meals_collection = _FakeMealsCollection(
+        [meal_snapshot],
+        fail_indexed_queries=True,
+        lazy_index_failures=True,
+    )
+    user_ref = mocker.Mock()
+    user_ref.get.return_value = user_snapshot
+    user_ref.collection.return_value = meals_collection
+    client = mocker.Mock()
+    client.collection.return_value.document.return_value = user_ref
+
+    mocker.patch("app.services.habit_signal_service.get_firestore", return_value=client)
+
+    response = asyncio.run(
+        habit_signal_service.get_habit_signals("user-1", computed_at=COMPUTED_AT)
+    )
+
+    assert response.behavior.loggingDays7 == 1
+    assert len(meals_collection.calls) == 4
 
 
 def test_get_habit_signals_wraps_firestore_errors(mocker: MockerFixture) -> None:
