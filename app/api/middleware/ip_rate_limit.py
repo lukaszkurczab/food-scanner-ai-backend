@@ -49,7 +49,7 @@ class IpRateLimitMiddleware(BaseHTTPMiddleware):
         with _BUCKET_LOCK:
             bucket = _ip_buckets.get(client_ip)
             if bucket is None:
-                bucket = deque()
+                bucket = deque[float]()
                 _ip_buckets[client_ip] = bucket
 
             while bucket and bucket[0] <= threshold:

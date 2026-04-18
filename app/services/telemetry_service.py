@@ -96,7 +96,7 @@ def _check_rate_limit(bucket_key: str) -> None:
     with _BUCKET_LOCK:
         bucket = _request_buckets.get(bucket_key)
         if bucket is None:
-            bucket = deque()
+            bucket = deque[float]()
             _request_buckets[bucket_key] = bucket
         threshold = now - RATE_LIMIT_WINDOW_SECONDS
         while bucket and bucket[0] <= threshold:
@@ -373,7 +373,12 @@ def get_smart_reminder_summary(
     daily: dict[str, dict[str, int]] = {}
 
     for snapshot in snapshots:
-        payload = dict(snapshot.to_dict() or {})
+        raw_payload = snapshot.to_dict() or {}
+        payload: dict[str, object] = (
+            {key: value for key, value in raw_payload.items() if isinstance(key, str)}
+            if isinstance(raw_payload, dict)
+            else {}
+        )
         event_name = str(payload.get("name") or "").strip()
         if event_name not in SMART_REMINDER_EVENT_NAMES:
             continue
@@ -392,9 +397,13 @@ def get_smart_reminder_summary(
             })
             day_bucket[outcome_key] = day_bucket.get(outcome_key, 0) + 1
 
-        props = payload.get("props") or {}
-        if not isinstance(props, dict):
-            props = {}
+        raw_props = payload.get("props")
+        props: dict[str, object] = {}
+        if isinstance(raw_props, dict):
+            raw_props_map = cast(dict[object, object], raw_props)
+            for raw_key, raw_value in raw_props_map.items():
+                if isinstance(raw_key, str):
+                    props[raw_key] = raw_value
 
         if event_name == "smart_reminder_suppressed":
             reason = props.get("suppressionReason")

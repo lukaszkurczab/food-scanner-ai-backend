@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Any
+from typing import Any, cast
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
@@ -71,7 +71,8 @@ def _badge_payload(spec: dict[str, object], unlocked_at: int) -> dict[str, objec
 def _read_unlocked_at(raw: object, fallback: int) -> int:
     if not isinstance(raw, dict):
         return fallback
-    unlocked_at = raw.get("unlockedAt")
+    raw_map = cast(dict[object, object], raw)
+    unlocked_at = raw_map.get("unlockedAt")
     return unlocked_at if isinstance(unlocked_at, int) and unlocked_at >= 0 else fallback
 
 

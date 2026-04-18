@@ -84,7 +84,9 @@ _fallback_buckets: TTLCache[str, deque[float]] = TTLCache(
 def _consume_fallback_slot(user_id: str) -> bool:
     now = monotonic()
     with _FALLBACK_LOCK:
-        bucket = _fallback_buckets.get(user_id, deque())
+        bucket = _fallback_buckets.get(user_id)
+        if bucket is None:
+            bucket = deque[float]()
         threshold = now - RATE_LIMIT_WINDOW_SECONDS
         while bucket and bucket[0] <= threshold:
             bucket.popleft()

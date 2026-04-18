@@ -30,6 +30,17 @@ class NotificationPrefsValidationError(Exception):
     """Raised when the notification preferences payload is invalid."""
 
 
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
+
+
 def _notification_collection(user_id: str) -> firestore.CollectionReference:
     client: firestore.Client = get_firestore()
     return client.collection(USERS_COLLECTION).document(user_id).collection(
@@ -52,11 +63,12 @@ def _prefs_document(user_id: str) -> firestore.DocumentReference:
 
 
 def _normalize_time(raw: object) -> dict[str, int]:
-    if not isinstance(raw, dict):
+    raw_map = _as_object_map(raw)
+    if raw_map is None:
         raise NotificationValidationError("Invalid notification time.")
 
-    hour = raw.get("hour")
-    minute = raw.get("minute")
+    hour = raw_map.get("hour")
+    minute = raw_map.get("minute")
     if not isinstance(hour, int) or hour < 0 or hour > 23:
         raise NotificationValidationError("Invalid notification hour.")
     if not isinstance(minute, int) or minute < 0 or minute > 59:
@@ -67,7 +79,7 @@ def _normalize_time(raw: object) -> dict[str, int]:
 def _normalize_days(raw: object) -> list[int]:
     if not isinstance(raw, list):
         raise NotificationValidationError("Invalid notification days.")
-    raw_days: list[object] = raw
+    raw_days = cast(list[object], raw)
     days = sorted(
         {
             int(day)
@@ -142,10 +154,11 @@ def _parse_notification_snapshot(snapshot: firestore.DocumentSnapshot) -> dict[s
 def _normalize_quiet_hours(raw: object) -> dict[str, int] | None:
     if raw is None:
         return None
-    if not isinstance(raw, dict):
+    raw_map = _as_object_map(raw)
+    if raw_map is None:
         raise NotificationPrefsValidationError("Invalid quiet hours.")
-    start_hour = raw.get("startHour")
-    end_hour = raw.get("endHour")
+    start_hour = raw_map.get("startHour")
+    end_hour = raw_map.get("endHour")
     if not isinstance(start_hour, int) or not 0 <= start_hour <= 23:
         raise NotificationPrefsValidationError("Invalid quiet hours.")
     if not isinstance(end_hour, int) or not 0 <= end_hour <= 23:
@@ -158,7 +171,7 @@ def _normalize_weekdays(raw: object) -> list[int] | None:
         return None
     if not isinstance(raw, list):
         raise NotificationPrefsValidationError("Invalid weekdays.")
-    raw_days: list[object] = raw
+    raw_days = cast(list[object], raw)
     days = sorted(
         {
             int(day)
@@ -209,11 +222,12 @@ def _normalize_notifications_prefs_payload(
 
 
 def _normalize_notifications_prefs_doc(raw: object) -> dict[str, Any]:
-    if not isinstance(raw, dict):
+    raw_map = _as_object_map(raw)
+    if raw_map is None:
         return {}
 
-    notifications = raw.get("notifications")
-    if not isinstance(notifications, dict):
+    notifications = _as_object_map(raw_map.get("notifications"))
+    if notifications is None:
         return {}
 
     normalized: dict[str, Any] = {}
@@ -232,7 +246,10 @@ def _normalize_notifications_prefs_doc(raw: object) -> dict[str, Any]:
 
     weekdays = notifications.get("weekdays0to6")
     if isinstance(weekdays, list):
-        normalized_days = [day for day in weekdays if isinstance(day, int) and 0 <= day <= 6]
+        weekdays_list = cast(list[object], weekdays)
+        normalized_days = [
+            day for day in weekdays_list if isinstance(day, int) and 0 <= day <= 6
+        ]
         normalized["weekdays0to6"] = sorted(set(normalized_days))
 
     days_ahead = notifications.get("daysAhead")
@@ -240,9 +257,10 @@ def _normalize_notifications_prefs_doc(raw: object) -> dict[str, Any]:
         normalized["daysAhead"] = days_ahead
 
     quiet_hours = notifications.get("quietHours")
-    if isinstance(quiet_hours, dict):
-        start_hour = quiet_hours.get("startHour")
-        end_hour = quiet_hours.get("endHour")
+    quiet_hours_map = _as_object_map(quiet_hours)
+    if quiet_hours_map is not None:
+        start_hour = quiet_hours_map.get("startHour")
+        end_hour = quiet_hours_map.get("endHour")
         if (
             isinstance(start_hour, int)
             and 0 <= start_hour <= 23

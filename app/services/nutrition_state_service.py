@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 import logging
-from typing import Any
+from typing import Any, cast
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
@@ -73,6 +73,24 @@ def _coerce_target(value: object) -> float | None:
     if isinstance(value, (int, float)) and float(value) > 0:
         return float(value)
     return None
+
+
+def _to_float_or_zero(value: object) -> float:
+    try:
+        return float(cast(Any, value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +180,8 @@ def _load_bounded_meals(
 
 
 def _extract_macro_targets(profile: dict[str, Any] | None) -> dict[str, float | None]:
-    profile_map = profile if isinstance(profile, dict) else {}
-    macro_targets = profile_map.get("macroTargets")
-    macro_map = macro_targets if isinstance(macro_targets, dict) else {}
+    profile_map = _as_object_map(profile) or {}
+    macro_map = _as_object_map(profile_map.get("macroTargets")) or {}
 
     return {
         "kcal": _coerce_target(profile_map.get("calorieTarget"))
@@ -196,17 +213,19 @@ def _sum_consumed(meals: list[dict[str, Any]]) -> NutritionConsumed:
         meal_kcal, meal_protein = _extract_totals(meal)
         kcal += meal_kcal
         protein += meal_protein
-        totals = meal.get("totals")
-        if isinstance(totals, dict):
-            carbs += float(totals.get("carbs") or 0)
-            fat += float(totals.get("fat") or 0)
+        totals_map = _as_object_map(meal.get("totals"))
+        if totals_map is not None:
+            carbs += _to_float_or_zero(totals_map.get("carbs"))
+            fat += _to_float_or_zero(totals_map.get("fat"))
         else:
             ingredients = meal.get("ingredients")
             if isinstance(ingredients, list):
-                for ingredient in ingredients:
-                    if isinstance(ingredient, dict):
-                        carbs += float(ingredient.get("carbs") or 0)
-                        fat += float(ingredient.get("fat") or 0)
+                ingredients_list = cast(list[object], ingredients)
+                for ingredient in ingredients_list:
+                    ingredient_map = _as_object_map(ingredient)
+                    if ingredient_map is not None:
+                        carbs += _to_float_or_zero(ingredient_map.get("carbs"))
+                        fat += _to_float_or_zero(ingredient_map.get("fat"))
 
     return NutritionConsumed(
         kcal=round_metric(kcal, 2),

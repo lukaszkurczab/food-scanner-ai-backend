@@ -24,7 +24,7 @@ def _check_rate_limit(bucket_key: str) -> None:
     with _BUCKET_LOCK:
         bucket = _request_buckets.get(bucket_key)
         if bucket is None:
-            bucket = deque()
+            bucket = deque[float]()
             _request_buckets[bucket_key] = bucket
         threshold = now - RATE_LIMIT_WINDOW_SECONDS
         while bucket and bucket[0] <= threshold:

@@ -42,6 +42,17 @@ class MealPhotoPayload(TypedDict):
     mealId: NotRequired[str | None]
 
 
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -62,15 +73,17 @@ def _as_bool(value: Any) -> bool:
 def _normalize_tags(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [tag.strip() for tag in value if isinstance(tag, str) and tag.strip()]
+    tags = cast(list[object], value)
+    return [tag.strip() for tag in tags if isinstance(tag, str) and tag.strip()]
 
 
 def _normalize_ingredients(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
 
+    raw_items = cast(list[object], value)
     items: list[dict[str, Any]] = []
-    for raw in value:
+    for raw in raw_items:
         if not isinstance(raw, dict):
             continue
         raw_map = cast(dict[str, object], raw)
@@ -108,9 +121,9 @@ def _compute_totals(ingredients: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def _normalize_totals(value: Any, ingredients: list[dict[str, Any]]) -> dict[str, float]:
-    if not isinstance(value, dict):
+    value_map = _as_object_map(value)
+    if value_map is None:
         return _compute_totals(ingredients)
-    value_map = cast(dict[str, object], value)
 
     return {
         "protein": coerce_float(value_map.get("protein")),
@@ -189,19 +202,24 @@ def _normalize_tz_offset_min(value: Any) -> int | None:
 
 
 def _normalize_ai_meta(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
+    value_map = _as_object_map(value)
+    if value_map is None:
         return None
 
-    model = coerce_optional_str(value.get("model"))
-    run_id = coerce_optional_str(value.get("runId"))
-    confidence_raw = value.get("confidence")
+    model = coerce_optional_str(value_map.get("model"))
+    run_id = coerce_optional_str(value_map.get("runId"))
+    confidence_raw = value_map.get("confidence")
     confidence = None
     if confidence_raw is not None:
         confidence = coerce_float(confidence_raw)
 
-    warnings_raw = value.get("warnings")
+    warnings_raw = value_map.get("warnings")
     warnings = (
-        [warning.strip() for warning in warnings_raw if isinstance(warning, str) and warning.strip()]
+        [
+            warning.strip()
+            for warning in cast(list[object], warnings_raw)
+            if isinstance(warning, str) and warning.strip()
+        ]
         if isinstance(warnings_raw, list)
         else []
     )

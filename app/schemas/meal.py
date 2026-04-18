@@ -34,6 +34,10 @@ class MealAiMeta(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+def _meal_ingredients_default() -> list[MealIngredient]:
+    return []
+
+
 class MealItem(BaseModel):
     userUid: str
     mealId: str
@@ -43,7 +47,7 @@ class MealItem(BaseModel):
     tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
     type: MealType
     name: str | None = None
-    ingredients: list[MealIngredient] = Field(default_factory=list)
+    ingredients: list[MealIngredient] = Field(default_factory=_meal_ingredients_default)
     createdAt: str
     updatedAt: str
     syncState: MealSyncState = "synced"
@@ -77,7 +81,7 @@ class MealUpsertRequest(BaseModel):
     tzOffsetMin: int | None = Field(default=None, ge=-840, le=840)
     type: MealType
     name: str | None = None
-    ingredients: list[MealIngredient] = Field(default_factory=list)
+    ingredients: list[MealIngredient] = Field(default_factory=_meal_ingredients_default)
     createdAt: str | None = None
     updatedAt: str | None = None
     syncState: MealSyncState | None = None

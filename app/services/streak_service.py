@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import logging
 import re
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
@@ -57,8 +57,9 @@ def _sanitize_streak_doc(raw: object) -> StreakState | None:
     if not isinstance(raw, dict):
         return None
 
-    current = raw.get("current")
-    last_date = raw.get("lastDate")
+    raw_map = cast(dict[object, object], raw)
+    current = raw_map.get("current")
+    last_date = raw_map.get("lastDate")
     normalized_current = current if isinstance(current, int) and current >= 0 else None
     normalized_last_date = (
         last_date
@@ -142,7 +143,8 @@ def _extract_meal_day_key(raw_meal: dict[str, object]) -> str | None:
 def _extract_meal_kcal(raw_meal: dict[str, object]) -> float:
     totals = raw_meal.get("totals")
     if isinstance(totals, dict):
-        value = totals.get("kcal")
+        totals_map = cast(dict[object, object], totals)
+        value = totals_map.get("kcal")
         if isinstance(value, (int, float)):
             return float(value)
     return 0.0

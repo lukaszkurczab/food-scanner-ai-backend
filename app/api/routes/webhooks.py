@@ -1,5 +1,6 @@
 from datetime import datetime
 import hmac
+from typing import cast
 
 from fastapi import APIRouter, Header, HTTPException, status
 
@@ -59,7 +60,8 @@ def _extract_entitlement_id(event: dict[str, object]) -> str | None:
 
     many = event.get("entitlement_ids")
     if isinstance(many, list):
-        for raw in many:
+        entitlement_ids = cast(list[object], many)
+        for raw in entitlement_ids:
             if isinstance(raw, str) and raw.strip():
                 return raw.strip()
     return None

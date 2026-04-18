@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -207,10 +207,38 @@ def _is_allowed_prop_value(value: Any) -> bool:
     if isinstance(value, str | int | float):
         return True
     if isinstance(value, list):
-        if len(value) > 10:
+        values = cast(list[object], value)
+        if len(values) > 10:
             return False
-        return all(_is_allowed_prop_value(item) and not isinstance(item, list | dict) for item in value)
+        return all(
+            _is_allowed_prop_value(item) and not isinstance(item, list | dict)
+            for item in values
+        )
     return False
+
+
+def _rejected_events_default() -> list["RejectedTelemetryEvent"]:
+    return []
+
+
+def _daily_event_counts_default() -> list["TelemetrySummaryEventCount"]:
+    return []
+
+
+def _daily_summary_buckets_default() -> list["TelemetryDailySummaryBucket"]:
+    return []
+
+
+def _smart_reason_counts_default() -> list["SmartReminderReasonCount"]:
+    return []
+
+
+def _smart_kind_counts_default() -> list["SmartReminderKindCount"]:
+    return []
+
+
+def _smart_daily_buckets_default() -> list["SmartReminderDailyBucket"]:
+    return []
 
 
 class TelemetryAppContext(BaseModel):
@@ -274,7 +302,8 @@ class TelemetryEventInput(BaseModel):
             if isinstance(prop_value, str) and len(prop_value) > MAX_PROP_STRING_LENGTH:
                 raise ValueError("Telemetry property value is too long")
             if isinstance(prop_value, list):
-                for item in prop_value:
+                prop_items = cast(list[object], prop_value)
+                for item in prop_items:
                     if isinstance(item, str) and len(item) > MAX_PROP_STRING_LENGTH:
                         raise ValueError("Telemetry property array value is too long")
 
@@ -340,7 +369,7 @@ class TelemetryBatchIngestResponse(BaseModel):
     acceptedCount: int
     duplicateCount: int
     rejectedCount: int
-    rejectedEvents: list[RejectedTelemetryEvent] = Field(default_factory=list)
+    rejectedEvents: list[RejectedTelemetryEvent] = Field(default_factory=_rejected_events_default)
 
     @model_validator(mode="after")
     def validate_counts(self) -> "TelemetryBatchIngestResponse":
@@ -361,7 +390,7 @@ class TelemetryDailySummaryBucket(BaseModel):
 
     day: str
     totalEvents: int = Field(ge=0)
-    eventCounts: list[TelemetrySummaryEventCount] = Field(default_factory=list)
+    eventCounts: list[TelemetrySummaryEventCount] = Field(default_factory=_daily_event_counts_default)
 
 
 class TelemetryDailySummaryResponse(BaseModel):
@@ -369,7 +398,7 @@ class TelemetryDailySummaryResponse(BaseModel):
 
     generatedAt: str
     days: int = Field(ge=1, le=30)
-    buckets: list[TelemetryDailySummaryBucket] = Field(default_factory=list)
+    buckets: list[TelemetryDailySummaryBucket] = Field(default_factory=_daily_summary_buckets_default)
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +466,7 @@ class SmartReminderRolloutSummaryResponse(BaseModel):
     generatedAt: str
     days: int = Field(ge=1, le=30)
     totals: SmartReminderOutcomeTotals
-    suppressionReasons: list[SmartReminderReasonCount] = Field(default_factory=list)
-    noopReasons: list[SmartReminderReasonCount] = Field(default_factory=list)
-    reminderKinds: list[SmartReminderKindCount] = Field(default_factory=list)
-    dailyBuckets: list[SmartReminderDailyBucket] = Field(default_factory=list)
+    suppressionReasons: list[SmartReminderReasonCount] = Field(default_factory=_smart_reason_counts_default)
+    noopReasons: list[SmartReminderReasonCount] = Field(default_factory=_smart_reason_counts_default)
+    reminderKinds: list[SmartReminderKindCount] = Field(default_factory=_smart_kind_counts_default)
+    dailyBuckets: list[SmartReminderDailyBucket] = Field(default_factory=_smart_daily_buckets_default)

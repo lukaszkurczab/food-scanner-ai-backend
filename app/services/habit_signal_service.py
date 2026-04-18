@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 import logging
-from typing import Any
+from typing import Any, cast
 
 from firebase_admin.exceptions import FirebaseError
 from google.api_core.exceptions import GoogleAPICallError, RetryError
@@ -55,17 +55,29 @@ class NormalizedMeal:
     used_timestamp_timing_fallback: bool = False
 
 
+def _new_str_set() -> set[str]:
+    return set()
+
+
+def _new_int_list() -> list[int]:
+    return []
+
+
+def _new_timing_dict() -> dict[str, list[int]]:
+    return {}
+
+
 @dataclass
 class DailyAggregate:
     meal_count: int = 0
     valid_meal_count: int = 0
     kcal: float = 0.0
     protein: float = 0.0
-    meal_types: set[str] = field(default_factory=set)
-    valid_meal_types: set[str] = field(default_factory=set)
+    meal_types: set[str] = field(default_factory=_new_str_set)
+    valid_meal_types: set[str] = field(default_factory=_new_str_set)
     has_unknown_details: bool = False
-    timing_minutes: list[int] = field(default_factory=list)
-    timing_minutes_by_type: dict[str, list[int]] = field(default_factory=dict)
+    timing_minutes: list[int] = field(default_factory=_new_int_list)
+    timing_minutes_by_type: dict[str, list[int]] = field(default_factory=_new_timing_dict)
     used_timestamp_day_fallback: bool = False
     used_timestamp_timing_fallback: bool = False
 
@@ -94,6 +106,17 @@ def _derive_day_key_parts(raw_meal: dict[str, Any]) -> tuple[str | None, bool]:
 def _derive_day_key(raw_meal: dict[str, Any]) -> str | None:
     day_key, _ = _derive_day_key_parts(raw_meal)
     return day_key
+
+
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
 
 
 def _parse_wall_clock_minute(value: Any) -> int | None:
@@ -133,10 +156,10 @@ def _extract_logged_at_local_min(raw_meal: dict[str, Any]) -> tuple[int | None, 
 
 
 def _extract_totals(raw_meal: dict[str, Any]) -> tuple[float, float]:
-    totals = raw_meal.get("totals")
-    if isinstance(totals, dict):
-        kcal = coerce_float(totals.get("kcal"))
-        protein = coerce_float(totals.get("protein"))
+    totals_map = _as_object_map(raw_meal.get("totals"))
+    if totals_map is not None:
+        kcal = coerce_float(totals_map.get("kcal"))
+        protein = coerce_float(totals_map.get("protein"))
         if kcal > 0 or protein > 0:
             return kcal, protein
 
@@ -144,11 +167,13 @@ def _extract_totals(raw_meal: dict[str, Any]) -> tuple[float, float]:
     protein = 0.0
     ingredients = raw_meal.get("ingredients")
     if isinstance(ingredients, list):
-        for raw_ingredient in ingredients:
-            if not isinstance(raw_ingredient, dict):
+        ingredients_list = cast(list[object], ingredients)
+        for raw_ingredient in ingredients_list:
+            ingredient_map = _as_object_map(raw_ingredient)
+            if ingredient_map is None:
                 continue
-            kcal += coerce_float(raw_ingredient.get("kcal"))
-            protein += coerce_float(raw_ingredient.get("protein"))
+            kcal += coerce_float(ingredient_map.get("kcal"))
+            protein += coerce_float(ingredient_map.get("protein"))
     return kcal, protein
 
 
@@ -157,13 +182,16 @@ def _has_meaningful_ingredients(raw_meal: dict[str, Any]) -> bool:
     if not isinstance(ingredients, list):
         return False
 
-    for raw_ingredient in ingredients:
-        if not isinstance(raw_ingredient, dict):
+    ingredients_list = cast(list[object], ingredients)
+    for raw_ingredient in ingredients_list:
+        ingredient_map = _as_object_map(raw_ingredient)
+        if ingredient_map is None:
             continue
-        if isinstance(raw_ingredient.get("name"), str) and raw_ingredient["name"].strip():
+        ingredient_name = ingredient_map.get("name")
+        if isinstance(ingredient_name, str) and ingredient_name.strip():
             return True
         if any(
-            coerce_float(raw_ingredient.get(field_name)) > 0
+            coerce_float(ingredient_map.get(field_name)) > 0
             for field_name in ("amount", "kcal", "protein", "carbs", "fat")
         ):
             return True
@@ -175,26 +203,27 @@ def _has_meaningful_totals(raw_meal: dict[str, Any]) -> bool:
     if kcal > 0 or protein > 0:
         return True
 
-    totals = raw_meal.get("totals")
-    if not isinstance(totals, dict):
+    totals_map = _as_object_map(raw_meal.get("totals"))
+    if totals_map is None:
         return False
     return any(
-        coerce_float(totals.get(field_name)) > 0
+        coerce_float(totals_map.get(field_name)) > 0
         for field_name in ("carbs", "fat")
     )
 
 
-def _parse_ai_meta(raw_meal: dict[str, Any]) -> dict[str, Any] | None:
+def _parse_ai_meta(raw_meal: dict[str, Any]) -> dict[str, object] | None:
     for key in ("aiMeta", "ai_meta"):
         value = raw_meal.get(key)
-        if isinstance(value, dict):
-            return value
+        value_map = _as_object_map(value)
+        if value_map is not None:
+            return value_map
     return None
 
 
 def _has_low_confidence_ai_meta(raw_meal: dict[str, Any]) -> bool:
     ai_meta = _parse_ai_meta(raw_meal)
-    if not isinstance(ai_meta, dict):
+    if ai_meta is None:
         return False
     confidence = ai_meta.get("confidence")
     return coerce_float(confidence, default=1.0) < LOW_CONFIDENCE_THRESHOLD
@@ -252,8 +281,8 @@ def _extract_protein_target(raw_user: dict[str, Any] | None) -> float | None:
         if isinstance(value, (int, float)) and float(value) > 0:
             return float(value)
 
-    macro_targets = raw_user.get("macroTargets")
-    if isinstance(macro_targets, dict):
+    macro_targets = _as_object_map(raw_user.get("macroTargets"))
+    if macro_targets is not None:
         for key in ("proteinGrams", "protein"):
             value = macro_targets.get(key)
             if isinstance(value, (int, float)) and float(value) > 0:

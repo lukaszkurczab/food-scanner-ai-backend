@@ -27,14 +27,18 @@ class AvatarMetadataResponse(BaseModel):
     updated: bool
 
 
+def _dict_items_default() -> list[dict[str, Any]]:
+    return []
+
+
 class UserExportResponse(BaseModel):
     profile: dict[str, Any] | None
     meals: list[dict[str, Any]]
-    myMeals: list[dict[str, Any]] = Field(default_factory=list)
+    myMeals: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     chatMessages: list[dict[str, Any]]
-    notifications: list[dict[str, Any]] = Field(default_factory=list)
+    notifications: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
     notificationPrefs: dict[str, Any] = Field(default_factory=dict)
-    feedback: list[dict[str, Any]] = Field(default_factory=list)
+    feedback: list[dict[str, Any]] = Field(default_factory=_dict_items_default)
 
 
 class UserProfileResponse(BaseModel):

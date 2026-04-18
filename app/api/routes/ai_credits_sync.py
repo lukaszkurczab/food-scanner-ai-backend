@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import cast
 from urllib.parse import quote
 
 import httpx
@@ -13,33 +14,46 @@ from app.services import ai_credits_service
 router = APIRouter()
 
 
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
+
+
 def _extract_active_entitlement(
     subscriber: dict[str, object],
 ) -> tuple[str, datetime, datetime | None] | None:
-    entitlements_raw = subscriber.get("entitlements")
-    if not isinstance(entitlements_raw, dict):
+    entitlements = _as_object_map(subscriber.get("entitlements"))
+    if entitlements is None:
         return None
 
     now = utc_now()
-    for entitlement_id, entitlement_raw in entitlements_raw.items():
-        if not isinstance(entitlement_id, str) or not entitlement_id.strip():
+    for entitlement_id, entitlement_raw in entitlements.items():
+        if not entitlement_id.strip():
             continue
-        if not isinstance(entitlement_raw, dict):
+        entitlement_map = _as_object_map(entitlement_raw)
+        if entitlement_map is None:
             continue
 
         expires_at = parse_flexible_datetime(
-            entitlement_raw.get("expires_date") or entitlement_raw.get("expires_date_ms")
+            entitlement_map.get("expires_date") or entitlement_map.get("expires_date_ms")
         )
         if expires_at is not None and expires_at <= now:
             continue
 
         anchor_at = (
             parse_flexible_datetime(
-                entitlement_raw.get("purchase_date") or entitlement_raw.get("purchase_date_ms")
+                entitlement_map.get("purchase_date")
+                or entitlement_map.get("purchase_date_ms")
             )
             or parse_flexible_datetime(
-                entitlement_raw.get("original_purchase_date")
-                or entitlement_raw.get("original_purchase_date_ms")
+                entitlement_map.get("original_purchase_date")
+                or entitlement_map.get("original_purchase_date_ms")
             )
             or now
         )
@@ -91,13 +105,14 @@ async def _fetch_revenuecat_subscriber(user_id: str) -> dict[str, object]:
         )
 
     try:
-        payload = response.json()
+        payload_raw = response.json()
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Invalid RevenueCat response",
         ) from exc
-    if not isinstance(payload, dict):
+    payload = _as_object_map(payload_raw)
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Invalid RevenueCat response",
@@ -111,8 +126,7 @@ async def sync_ai_credits_tier(
 ) -> AiCreditsResponse:
     user_id = current_user.uid
     revenuecat_payload = await _fetch_revenuecat_subscriber(user_id)
-    subscriber = revenuecat_payload.get("subscriber")
-    subscriber_data = subscriber if isinstance(subscriber, dict) else {}
+    subscriber_data = _as_object_map(revenuecat_payload.get("subscriber")) or {}
 
     current_status = await ai_credits_service.get_credits_status(user_id)
     active_entitlement = _extract_active_entitlement(subscriber_data)

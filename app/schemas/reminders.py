@@ -55,6 +55,10 @@ NOOP_REASON_CODES: frozenset[ReminderReasonCode] = frozenset(
 )
 
 
+def _reason_codes_default() -> list[ReminderReasonCode]:
+    return []
+
+
 class ReminderDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,7 +66,10 @@ class ReminderDecision(BaseModel):
     computedAt: str = Field(min_length=20, max_length=20)
     decision: ReminderDecisionType
     kind: ReminderKind | None = None
-    reasonCodes: list[ReminderReasonCode] = Field(default_factory=list, min_length=1)
+    reasonCodes: list[ReminderReasonCode] = Field(
+        default_factory=_reason_codes_default,
+        min_length=1,
+    )
     scheduledAtUtc: str | None = Field(default=None, min_length=20, max_length=20)
     confidence: float = Field(ge=0, le=1)
     validUntil: str = Field(min_length=20, max_length=20)

@@ -1,10 +1,17 @@
 """Backend-owned chat prompt shaping for /ai/ask."""
 
-from typing import Any
+from typing import Any, cast
 
 
-def _as_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+def _as_dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, Any] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
 
 
 def _as_string(value: Any) -> str | None:
@@ -30,7 +37,8 @@ def _as_number(value: Any) -> float | None:
 def _as_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    items = cast(list[object], value)
+    return [item.strip() for item in items if isinstance(item, str) and item.strip()]
 
 
 def _coarsen_range(value: Any, bucket_size: int, unit: str | None = None) -> str | None:
@@ -47,18 +55,20 @@ def _history_to_lines(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
 
+    items = cast(list[object], value)
     lines: list[str] = []
-    for item in value[-4:]:
+    for item in items[-4:]:
         if isinstance(item, str):
             normalized = item.strip()
             if normalized:
                 lines.append(normalized)
             continue
 
-        if isinstance(item, dict):
-            text = _as_string(item.get("text") or item.get("content"))
+        item_map = _as_dict(item)
+        if item_map:
+            text = _as_string(item_map.get("text") or item_map.get("content"))
             if text:
-                role = _as_string(item.get("from") or item.get("role")) or "user"
+                role = _as_string(item_map.get("from") or item_map.get("role")) or "user"
                 lines.append(f"{role}: {text}")
 
     return lines
@@ -67,17 +77,18 @@ def _history_to_lines(value: Any) -> list[str]:
 def _summarize_meals(meals: Any) -> str:
     if not isinstance(meals, list):
         return "none"
-    meal_items: list[object] = meals
+    meal_items = cast(list[object], meals)
     if not meal_items:
         return "none"
 
     normalized: list[tuple[str, str]] = []
     for item in meal_items[:5]:
-        if not isinstance(item, dict):
+        item_map = _as_dict(item)
+        if not item_map:
             continue
-        timestamp = _as_string(item.get("timestamp") or item.get("createdAt")) or ""
+        timestamp = _as_string(item_map.get("timestamp") or item_map.get("createdAt")) or ""
         date_key = timestamp[:10] if len(timestamp) >= 10 else "unknown"
-        name = _as_string(item.get("name") or item.get("type")) or "meal"
+        name = _as_string(item_map.get("name") or item_map.get("type")) or "meal"
         normalized.append((date_key, name))
 
     if not normalized:
@@ -177,7 +188,7 @@ def _derive_flags_and_avoid(profile: dict[str, Any]) -> tuple[list[str], list[st
 
 def _compact_profile(profile: dict[str, Any], language: str) -> str:
     units_system = _as_string(profile.get("unitsSystem")) or "metric"
-    compact = {
+    compact: dict[str, object | None] = {
         "g": _as_string(profile.get("goal")),
         "act": _as_string(profile.get("activityLevel")),
         "s": _as_string(profile.get("sex")),

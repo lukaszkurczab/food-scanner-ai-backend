@@ -64,11 +64,19 @@ class WeeklyReportPriority(BaseModel):
     reasonCodes: list[str] = Field(default_factory=list, max_length=6)
 
 
+def _weekly_report_insights_default() -> list[WeeklyReportInsight]:
+    return []
+
+
+def _weekly_report_priorities_default() -> list[WeeklyReportPriority]:
+    return []
+
+
 class WeeklyReportResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: WeeklyReportStatus
     period: WeeklyReportPeriod
     summary: str | None = Field(default=None, min_length=1, max_length=160)
-    insights: list[WeeklyReportInsight] = Field(default_factory=list, max_length=4)
-    priorities: list[WeeklyReportPriority] = Field(default_factory=list, max_length=2)
+    insights: list[WeeklyReportInsight] = Field(default_factory=_weekly_report_insights_default, max_length=4)
+    priorities: list[WeeklyReportPriority] = Field(default_factory=_weekly_report_priorities_default, max_length=2)

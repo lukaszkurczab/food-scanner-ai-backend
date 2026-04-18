@@ -52,6 +52,24 @@ class PhotoAnalysisResult(TypedDict):
     usage: OpenAIUsage
 
 
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
+
+
+def _as_object_list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    values = cast(list[object], value)
+    return values
+
+
 def _resolve_chat_messages(message: str) -> list[ChatCompletionMessageParam]:
     marker = "\nUSER_MESSAGE="
     marker_index = message.rfind(marker)
@@ -83,17 +101,30 @@ def _resolve_chat_messages(message: str) -> list[ChatCompletionMessageParam]:
 
 
 def _extract_reply_content(response: Any) -> str:
-    choices = response["choices"] if isinstance(response, dict) else response.choices
+    response_obj = cast(object, response)
+    if isinstance(response, dict):
+        response_map = _as_object_map(cast(object, response)) or {}
+        choices_raw = response_map.get("choices")
+    else:
+        choices_raw = cast(object, getattr(response_obj, "choices", None))
+    choices = _as_object_list(choices_raw)
     if not choices:
         raise OpenAIServiceError("OpenAI returned an empty response.")
 
     first_choice = choices[0]
+    reply: str | None = None
     if isinstance(first_choice, dict):
-        reply = first_choice.get("message", {}).get("content")
+        choice_map = _as_object_map(cast(object, first_choice)) or {}
+        message_map = _as_object_map(choice_map.get("message")) or {}
+        raw_reply = message_map.get("content")
+        if isinstance(raw_reply, str):
+            reply = raw_reply
     else:
         first_choice_obj = cast(object, first_choice)
-        message = cast(Any, getattr(first_choice_obj, "message", None))
-        reply = cast(str | None, getattr(cast(object, message), "content", None))
+        message = cast(object, getattr(first_choice_obj, "message", None))
+        raw_reply = cast(object, getattr(message, "content", None))
+        if isinstance(raw_reply, str):
+            reply = raw_reply
 
     if not reply:
         raise OpenAIServiceError("OpenAI returned an empty response.")
@@ -102,25 +133,34 @@ def _extract_reply_content(response: Any) -> str:
 
 
 def _extract_usage(response: Any) -> OpenAIUsage:
-    usage = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
-    if usage is None:
+    response_obj = cast(object, response)
+    if isinstance(response, dict):
+        response_map = _as_object_map(cast(object, response)) or {}
+        usage_raw = response_map.get("usage")
+    else:
+        usage_raw = cast(object, getattr(response_obj, "usage", None))
+    if usage_raw is None:
         return {
             "prompt_tokens": None,
             "completion_tokens": None,
             "total_tokens": None,
         }
 
-    if isinstance(usage, dict):
-        prompt_tokens = usage.get("prompt_tokens")
-        completion_tokens = usage.get("completion_tokens")
-        total_tokens = usage.get("total_tokens")
+    if isinstance(usage_raw, dict):
+        usage_map = _as_object_map(cast(object, usage_raw)) or {}
+        prompt_tokens = usage_map.get("prompt_tokens")
+        completion_tokens = usage_map.get("completion_tokens")
+        total_tokens = usage_map.get("total_tokens")
     else:
-        prompt_tokens = getattr(usage, "prompt_tokens", None)
-        completion_tokens = getattr(usage, "completion_tokens", None)
-        total_tokens = getattr(usage, "total_tokens", None)
+        usage_obj = cast(object, usage_raw)
+        prompt_tokens = cast(object, getattr(usage_obj, "prompt_tokens", None))
+        completion_tokens = cast(object, getattr(usage_obj, "completion_tokens", None))
+        total_tokens = cast(object, getattr(usage_obj, "total_tokens", None))
 
-    def _to_int(value: Any) -> int | None:
-        return int(value) if isinstance(value, int | float) else None
+    def _to_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        return int(value) if isinstance(value, (int, float)) else None
 
     return {
         "prompt_tokens": _to_int(prompt_tokens),
@@ -129,7 +169,7 @@ def _extract_usage(response: Any) -> OpenAIUsage:
     }
 
 
-def _parse_json_array(raw: str) -> list[Any]:
+def _parse_json_array(raw: str) -> list[object]:
     start = raw.find("[")
     end = raw.rfind("]")
     if start == -1 or end == -1 or end <= start:
@@ -151,7 +191,8 @@ def _parse_json_array(raw: str) -> list[Any]:
     if not isinstance(parsed, list):
         raise OpenAIServiceError("OpenAI returned an invalid ingredients payload.")
 
-    return parsed
+    parsed_list = cast(list[object], parsed)
+    return parsed_list
 
 
 def _coerce_number(value: Any) -> float:
@@ -177,8 +218,9 @@ def parse_ingredients_reply(raw: str) -> list[AnalyzedIngredient]:
     parsed = _parse_json_array(raw)
     ingredients: list[AnalyzedIngredient] = []
 
-    for item in parsed:
-        if not isinstance(item, dict):
+    for raw_item in parsed:
+        item = _as_object_map(cast(object, raw_item))
+        if item is None:
             raise OpenAIServiceError("OpenAI returned an invalid ingredient object.")
 
         name = item.get("name")

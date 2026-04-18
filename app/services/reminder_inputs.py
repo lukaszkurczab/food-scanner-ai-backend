@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from app.core.datetime_utils import ensure_utc_datetime, parse_flexible_datetime
 from app.services.meal_service import list_changes, list_history
@@ -19,6 +19,17 @@ from app.services.reminder_engine.types import (
 
 PREFERRED_WINDOW_RADIUS_MIN = 60
 UTC = timezone.utc
+
+
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
 
 
 @dataclass(frozen=True)
@@ -166,11 +177,12 @@ def _derive_reminders_enabled(
 
 
 def _build_quiet_hours(raw_quiet_hours: object) -> ReminderQuietHours | None:
-    if not isinstance(raw_quiet_hours, dict):
+    quiet_hours = _as_object_map(raw_quiet_hours)
+    if quiet_hours is None:
         return None
 
-    start_hour = raw_quiet_hours.get("startHour")
-    end_hour = raw_quiet_hours.get("endHour")
+    start_hour = quiet_hours.get("startHour")
+    end_hour = quiet_hours.get("endHour")
     if not isinstance(start_hour, int) or not isinstance(end_hour, int):
         return None
 
@@ -240,7 +252,7 @@ def _derive_preferred_window(
     kind: str,
 ) -> ReminderWindow | None:
     current_min = now_local.hour * 60 + now_local.minute
-    candidates = sorted(
+    candidates: list[ReminderWindow] = sorted(
         (
             window
             for item in notification_items
@@ -250,7 +262,7 @@ def _derive_preferred_window(
         key=lambda window: window.start_min,
     )
 
-    active_candidates = [
+    active_candidates: list[ReminderWindow] = [
         window
         for window in candidates
         if _is_minute_in_window(current_min, window)
@@ -258,7 +270,7 @@ def _derive_preferred_window(
     if active_candidates:
         return active_candidates[0]
 
-    future_candidates = [
+    future_candidates: list[ReminderWindow] = [
         window
         for window in candidates
         if current_min < window.start_min
@@ -316,8 +328,8 @@ def _matches_preferred_window_kind(
 def _window_for_notification(
     notification_item: dict[str, Any],
 ) -> ReminderWindow | None:
-    time_value = notification_item.get("time")
-    if not isinstance(time_value, dict):
+    time_value = _as_object_map(notification_item.get("time"))
+    if time_value is None:
         return None
 
     hour = time_value.get("hour")

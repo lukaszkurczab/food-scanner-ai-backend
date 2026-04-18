@@ -47,10 +47,14 @@ class CoachMeta(BaseModel):
     isDegraded: bool = False
 
 
+def _coach_insights_default() -> list[CoachInsight]:
+    return []
+
+
 class CoachResponse(BaseModel):
     dayKey: str
     computedAt: str
     source: CoachSource = "rules"
-    insights: list[CoachInsight] = Field(default_factory=list, max_length=3)
+    insights: list[CoachInsight] = Field(default_factory=_coach_insights_default, max_length=3)
     topInsight: CoachInsight | None = None
     meta: CoachMeta = Field(default_factory=CoachMeta)

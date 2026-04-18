@@ -23,7 +23,7 @@ def _none_if_blank(value: str | None) -> str | None:
 
 
 def build_text_meal_prompt(payload: AiTextMealPayload, lang: str) -> str:
-    normalized_payload = {
+    normalized_payload: dict[str, object | None] = {
         "name": _none_if_blank(payload.name),
         "ingredients": _none_if_blank(payload.ingredients),
         "amount_g": payload.amount_g,

@@ -1,10 +1,12 @@
 from collections.abc import Callable
+from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 
 @pytest.fixture(autouse=True)
-def mock_auth_token_decoder(mocker):
+def mock_auth_token_decoder(mocker: MockerFixture) -> MagicMock:
     def _decode(id_token: str) -> dict[str, str]:
         return {"uid": id_token.strip()}
 

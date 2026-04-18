@@ -64,7 +64,7 @@ def _sanitize_history(value: Any) -> list[Any]:
         return []
 
     sanitized: list[Any] = []
-    for item in value:
+    for item in cast(list[object], value):
         if isinstance(item, str):
             sanitized.append(_sanitize_free_text(item))
             continue
@@ -86,7 +86,7 @@ def _sanitize_meals(value: Any) -> list[Any]:
         return []
 
     sanitized: list[Any] = []
-    for item in value:
+    for item in cast(list[object], value):
         if not isinstance(item, dict):
             continue
         source = cast(dict[str, Any], item)

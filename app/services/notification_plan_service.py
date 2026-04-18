@@ -62,10 +62,11 @@ def _clamp_minute(value: object) -> int:
 def _parse_days(value: object) -> list[int]:
     if not isinstance(value, list):
         return list(DEFAULT_DAYS)
+    days_source = cast(list[object], value)
     days = sorted(
         {
             int(day)
-            for day in value
+            for day in days_source
             if isinstance(day, (int, float)) and int(day) == day and 0 <= int(day) <= 6
         }
     )
@@ -129,7 +130,8 @@ def _sum_consumed_kcal(meals: list[dict[str, object]]) -> float:
     for meal in meals:
         totals = meal.get("totals")
         if isinstance(totals, dict):
-            kcal = totals.get("kcal")
+            totals_map = cast(dict[object, object], totals)
+            kcal = totals_map.get("kcal")
             if isinstance(kcal, (int, float)):
                 total += float(kcal)
     return total

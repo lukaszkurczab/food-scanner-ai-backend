@@ -22,5 +22,9 @@ class BadgeItemResponse(BaseModel):
     unlockedAt: int = Field(ge=0)
 
 
+def _badge_items_default() -> list[BadgeItemResponse]:
+    return []
+
+
 class BadgeListResponse(BaseModel):
-    items: list[BadgeItemResponse] = Field(default_factory=list)
+    items: list[BadgeItemResponse] = Field(default_factory=_badge_items_default)

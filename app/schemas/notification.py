@@ -8,13 +8,21 @@ class NotificationTime(BaseModel):
     minute: int = Field(ge=0, le=59)
 
 
+def _notification_days_default() -> list[int]:
+    return []
+
+
+def _notification_items_default() -> list["UserNotificationItem"]:
+    return []
+
+
 class UserNotificationItem(BaseModel):
     id: str = Field(min_length=1)
     type: Literal["meal_reminder", "calorie_goal", "day_fill"]
     name: str = Field(min_length=1)
     text: str | None = None
     time: NotificationTime
-    days: list[int] = Field(default_factory=list)
+    days: list[int] = Field(default_factory=_notification_days_default)
     enabled: bool
     createdAt: int = Field(ge=0)
     updatedAt: int = Field(ge=0)
@@ -23,7 +31,7 @@ class UserNotificationItem(BaseModel):
 
 
 class NotificationListResponse(BaseModel):
-    items: list[UserNotificationItem] = Field(default_factory=list)
+    items: list[UserNotificationItem] = Field(default_factory=_notification_items_default)
 
 
 class NotificationUpsertResponse(BaseModel):
