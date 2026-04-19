@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from app.domain.meals.models.meal_record import MealRecord
 from app.domain.meals.services.meal_query_service import MealQueryService
 
 
