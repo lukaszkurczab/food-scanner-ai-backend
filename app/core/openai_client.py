@@ -136,6 +136,24 @@ class OpenAIClient:
         schema: Any,
         temperature: float = 0.0,
     ) -> Any:
+        structured = await self.responses_json_with_usage(
+            model=model,
+            messages=messages,
+            schema=schema,
+            temperature=temperature,
+        )
+        if isinstance(structured, dict):
+            return structured.get("data")
+        return structured
+
+    async def responses_json_with_usage(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        schema: Any,
+        temperature: float = 0.0,
+    ) -> dict[str, Any]:
         try:
             response = await self._client.chat.completions.create(
                 model=model,
@@ -167,9 +185,14 @@ class OpenAIClient:
             raise OpenAIServiceError("OpenAI returned invalid JSON response.") from exc
 
         try:
-            return _validate_against_schema(schema, payload)
+            data = _validate_against_schema(schema, payload)
         except Exception as exc:  # noqa: BLE001
             raise OpenAIServiceError("OpenAI returned schema-invalid response.") from exc
+
+        return {
+            "data": data,
+            "usage": _extract_usage(response),
+        }
 
     async def chat_completion(
         self,

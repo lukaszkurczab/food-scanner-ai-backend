@@ -130,6 +130,14 @@ async def test_get_app_help_context_returns_deterministic_facts() -> None:
     result = await tool.execute(user_id="user-1", args={"topic": "meal_logging"})
     assert result["topic"] == "meal_logging"
     assert len(result["answerFacts"]) >= 2
+    assert any("Meals" in item or "podsumowania" in item for item in result["answerFacts"])
+
+
+async def test_get_app_help_context_normalizes_chat_topic() -> None:
+    tool = GetAppHelpContextTool()
+    result = await tool.execute(user_id="user-1", args={"topic": "chat_v2"})
+    assert result["topic"] == "chat"
+    assert any("/api/v2/ai/chat/runs" in item for item in result["answerFacts"])
 
 
 async def test_consent_service_enforces_ai_health_data_consent() -> None:
