@@ -6,7 +6,7 @@ gunicorn==23.0.0
 
 # Config / env
 python-dotenv==1.2.2
-pydantic-settings==2.13.1
+pydantic-settings==2.14.0
 cachetools==7.0.5
 
 # Google / Firebase
