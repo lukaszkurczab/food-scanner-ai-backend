@@ -264,7 +264,7 @@ def _run_with_retry(
     for attempt in range(1, capped_retries + 1):
         try:
             return operation()
-        except RETRYABLE_EXCEPTIONS as exc:
+        except RETRYABLE_EXCEPTIONS:
             if attempt >= capped_retries:
                 logger.exception("Operation failed after retries: %s", description)
                 raise
