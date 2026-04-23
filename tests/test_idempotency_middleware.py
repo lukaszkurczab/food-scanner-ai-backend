@@ -27,8 +27,8 @@ def create_test_client(
     app = FastAPI()
     app.add_middleware(IdempotencyMiddleware)
 
-    @app.post("/api/v1/ai/ask")
-    async def ai_ask() -> Any:
+    @app.post("/api/v2/ai/chat/runs")
+    async def ai_chat_run() -> Any:
         return await ai_handler()
 
     @app.post("/health")
@@ -44,8 +44,8 @@ def test_second_request_with_same_key_returns_cached_response() -> None:
     client = create_test_client(ai_handler=ai_handler, health_handler=health_handler)
     headers = {"X-Idempotency-Key": "same-key"}
 
-    first = client.post("/api/v1/ai/ask", json={"message": "hello"}, headers=headers)
-    second = client.post("/api/v1/ai/ask", json={"message": "hello"}, headers=headers)
+    first = client.post("/api/v2/ai/chat/runs", json={"message": "hello"}, headers=headers)
+    second = client.post("/api/v2/ai/chat/runs", json={"message": "hello"}, headers=headers)
 
     assert first.status_code == 200
     assert first.json() == {"detail": "ok"}
@@ -63,8 +63,8 @@ def test_request_without_idempotency_key_passes_through_without_caching() -> Non
     health_handler = AsyncMock(return_value={"detail": "healthy"})
     client = create_test_client(ai_handler=ai_handler, health_handler=health_handler)
 
-    first = client.post("/api/v1/ai/ask", json={"message": "hello"})
-    second = client.post("/api/v1/ai/ask", json={"message": "hello"})
+    first = client.post("/api/v2/ai/chat/runs", json={"message": "hello"})
+    second = client.post("/api/v2/ai/chat/runs", json={"message": "hello"})
 
     assert first.status_code == 200
     assert first.json() == {"detail": "first"}
@@ -88,8 +88,8 @@ def test_failed_first_request_is_not_cached() -> None:
     client = create_test_client(ai_handler=ai_handler, health_handler=health_handler)
     headers = {"X-Idempotency-Key": "retry-after-failure"}
 
-    first = client.post("/api/v1/ai/ask", json={"message": "hello"}, headers=headers)
-    second = client.post("/api/v1/ai/ask", json={"message": "hello"}, headers=headers)
+    first = client.post("/api/v2/ai/chat/runs", json={"message": "hello"}, headers=headers)
+    second = client.post("/api/v2/ai/chat/runs", json={"message": "hello"}, headers=headers)
 
     assert first.status_code == 500
     assert first.json() == {"detail": "upstream failure"}

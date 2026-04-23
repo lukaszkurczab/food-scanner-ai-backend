@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from typing import cast
 from zoneinfo import ZoneInfo
 
@@ -86,6 +86,27 @@ class MealQueryService:
         if end < start:
             raise ValueError("end_date must be on or after start_date")
 
+    @staticmethod
+    def _utc_timestamp_bounds(
+        *,
+        start_date: str,
+        end_date: str,
+        timezone: str,
+    ) -> tuple[str, str]:
+        zone = ZoneInfo(timezone)
+        utc_zone = ZoneInfo("UTC")
+        start_day = datetime.fromisoformat(start_date).date()
+        end_day = datetime.fromisoformat(end_date).date()
+
+        start_local = datetime.combine(start_day, time.min, zone)
+        end_exclusive_local = datetime.combine(end_day + timedelta(days=1), time.min, zone)
+
+        start_utc = start_local.astimezone(utc_zone).isoformat().replace("+00:00", "Z")
+        end_exclusive_utc = (
+            end_exclusive_local.astimezone(utc_zone).isoformat().replace("+00:00", "Z")
+        )
+        return start_utc, end_exclusive_utc
+
     async def get_meals_in_range(
         self,
         *,
@@ -96,25 +117,48 @@ class MealQueryService:
     ) -> list[MealRecord]:
         self._validate_scope(start_date=start_date, end_date=end_date)
         collection = self._meals_collection(user_id=user_id)
+        start_timestamp_utc, end_timestamp_utc = self._utc_timestamp_bounds(
+            start_date=start_date,
+            end_date=end_date,
+            timezone=timezone,
+        )
+        snapshots_by_id: dict[str, firestore.DocumentSnapshot] = {}
+        day_key_query_failed = False
+        timestamp_query_failed = False
 
         try:
-            query = (
-                collection.where(filter=FieldFilter("deleted", "==", False))
-                .where(filter=FieldFilter("dayKey", ">=", start_date))
-                .where(filter=FieldFilter("dayKey", "<=", end_date))
-            )
-            snapshots = list(query.stream())
-        except FailedPrecondition:
-            # Graceful fallback when a range index is temporarily missing.
-            snapshots = list(
-                collection.where(filter=FieldFilter("deleted", "==", False)).stream()
-            )
+            try:
+                day_key_query = (
+                    collection.where(filter=FieldFilter("dayKey", ">=", start_date))
+                    .where(filter=FieldFilter("dayKey", "<=", end_date))
+                )
+                for snapshot in day_key_query.stream():
+                    snapshots_by_id[snapshot.id] = snapshot
+            except FailedPrecondition:
+                day_key_query_failed = True
+
+            try:
+                timestamp_query = (
+                    collection.where(filter=FieldFilter("timestamp", ">=", start_timestamp_utc))
+                    .where(filter=FieldFilter("timestamp", "<", end_timestamp_utc))
+                )
+                for snapshot in timestamp_query.stream():
+                    snapshots_by_id[snapshot.id] = snapshot
+            except FailedPrecondition:
+                timestamp_query_failed = True
+
+            if day_key_query_failed and timestamp_query_failed:
+                # Graceful fallback when range indexes are temporarily missing.
+                for snapshot in collection.stream():
+                    snapshots_by_id[snapshot.id] = snapshot
         except (FirebaseError, GoogleAPICallError, RetryError) as exc:
             raise FirestoreServiceError("Failed to query meals in range.") from exc
 
         records: list[MealRecord] = []
-        for snapshot in snapshots:
+        for snapshot in snapshots_by_id.values():
             payload = dict(snapshot.to_dict() or {})
+            if bool(payload.get("deleted")):
+                continue
             record = self._to_meal_record(
                 meal_id=snapshot.id,
                 payload=payload,

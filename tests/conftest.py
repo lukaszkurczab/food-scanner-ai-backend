@@ -26,7 +26,6 @@ def auth_headers() -> Callable[[str], dict[str, str]]:
 
 
 _LEGACY_AI_EXTRA_FILES = {
-    "test_api_ai_auth.py",
     "test_api_chat_threads.py",
     "test_openai_service.py",
     "test_text_meal_service.py",

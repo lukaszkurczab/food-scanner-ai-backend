@@ -157,22 +157,41 @@ class OpenAIClient:
         schema: object,
         temperature: float = 0.0,
     ) -> dict[str, Any]:
-        try:
-            response = await self._client.chat.completions.create(
+        schema_name = _schema_name(schema)
+        schema_payload = _schema_json(schema)
+
+        async def _request_structured(strict: bool) -> Any:
+            return await self._client.chat.completions.create(
                 model=model,
                 messages=cast(Any, messages),
                 temperature=temperature,
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
-                        "name": _schema_name(schema),
-                        "schema": _schema_json(schema),
-                        "strict": True,
+                        "name": schema_name,
+                        "schema": schema_payload,
+                        "strict": strict,
                     },
                 },
             )
+
+        try:
+            response = await _request_structured(strict=True)
         except Exception as exc:  # noqa: BLE001
-            raise OpenAIServiceError("OpenAI structured request failed.") from exc
+            # Some valid Pydantic JSON schemas (for example dynamic object maps like
+            # Dict[str, Any]) are rejected by OpenAI strict mode (`additionalProperties`).
+            # Fallback keeps structured output enabled while preserving runtime stability.
+            error_text = str(exc).lower()
+            is_schema_reject = (
+                getattr(exc, "status_code", None) == 400
+                and "invalid schema for response_format" in error_text
+            )
+            if not is_schema_reject:
+                raise OpenAIServiceError("OpenAI structured request failed.") from exc
+            try:
+                response = await _request_structured(strict=False)
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise OpenAIServiceError("OpenAI structured request failed.") from fallback_exc
 
         try:
             content = response.choices[0].message.content

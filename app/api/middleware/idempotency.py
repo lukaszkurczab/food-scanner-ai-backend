@@ -21,7 +21,7 @@ _idempotency_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=50_000, ttl
 
 # Only cache these path prefixes
 _IDEMPOTENT_PATHS = {
-    "/api/v1/ai/ask",
+    "/api/v2/ai/chat/runs",
     "/api/v1/ai/photo/analyze",
     "/api/v1/ai/text-meal/analyze",
 }

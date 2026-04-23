@@ -10,7 +10,7 @@ client = TestClient(app)
     ("path", "payload"),
     [
         (
-            "/api/v1/ai/ask",
+            "/api/v2/ai/chat/runs",
             {
                 "threadId": "thread-1",
                 "clientMessageId": "client-msg-1",

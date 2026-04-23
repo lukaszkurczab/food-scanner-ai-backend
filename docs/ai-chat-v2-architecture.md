@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the canonical backend path for AI Chat v2 and the boundary versus legacy v1 AI flow.
+This document defines the canonical backend path for AI Chat v2 and the guardrails that prevent legacy chat v1 from returning.
 
 ## Canonical v2 Path
 
@@ -42,16 +42,25 @@ This document defines the canonical backend path for AI Chat v2 and the boundary
 
 ## v1/v2 Boundary Rules
 
-- v1 compatibility path remains:
-  - `app/api/routes/ai.py`
-  - legacy modules in `app/services/*` used by v1 AI flow
+- Canonical chat runtime is only:
+  - `POST /api/v2/ai/chat/runs`
+  - `app/api/v2/endpoints/ai_chat.py`
+  - `app/api/v2/deps/ai_chat.py`
+  - `app/domain/chat/*`
+- Removed and forbidden for chat:
+  - legacy v1 ask endpoint
+  - backward-compat alias exports in `app/api/routes/ai.py` (`legacy_*`, `ai_context_service = ...`, etc.)
+  - chat-only v1 modules in `app/services/*` and `app/schemas/ai_ask.py`
 - v2 path must not depend on legacy AI context/prompt flow.
 - Forbidden in canonical v2 path:
   - `app.services.ai_context_service`
   - `app.services.ai_chat_prompt_service`
   - `app.services.conversation_memory_service`
   - `app.services.ai_token_budget_service`
+  - `app.services.sanitization_service`
   - `app.services.openai_service` (for chat flow)
+- Allowed legacy v1 AI surface:
+  - `app/api/routes/ai.py` endpoints for photo/text meal analysis.
 
 ## Test Ownership
 
@@ -60,13 +69,13 @@ Markers:
 - `ai_v2`:
   - canonical v2 tests under `app/tests/*`
 - `legacy_ai`:
-  - legacy v1 AI/chat tests in `tests/*` related to old AI routes/services
+  - legacy AI v1 tests in `tests/*` (analysis/gateway compatibility), not chat v1 runtime.
 
 Recommended commands:
 
 - only v2 tests:
   - `pytest -q -m ai_v2 app/tests`
-- only legacy AI tests:
+- only legacy AI v1 compatibility tests:
   - `pytest -q -m legacy_ai tests`
 
 ## Known Limitations (Current)

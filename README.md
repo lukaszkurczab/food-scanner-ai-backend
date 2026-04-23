@@ -52,11 +52,12 @@ README.md
   - Deterministic tools: `app/domain/tools/*`
   - Chat memory + runs persistence: `app/domain/chat_memory/*`, `app/domain/ai_runs/*`, `app/infra/firestore/repositories/*`
   - Schemas: `app/schemas/ai_chat/*`
-- **Legacy AI v1 (kept for compatibility)**
-  - Route: `app/api/routes/ai.py`
-  - Supporting services: selected modules in `app/services/*` (`ai_context_service`, `ai_chat_prompt_service`, `conversation_memory_service`, `ai_token_budget_service`, `ai_run_service`, `ai_gateway_service`, `ai_gateway_logger`)
-- **Reusable utility**
-  - `app/services/openai_service.py` remains used by legacy v1 routes and text-meal analysis.
+- **Legacy AI v1 analysis (kept for compatibility)**
+  - Route: `app/api/routes/ai.py` (photo/text meal analysis only)
+  - Supporting services: `ai_gateway_service`, `ai_gateway_logger`, `openai_service`, `text_meal_service`
+- **Removed legacy chat v1**
+  - Legacy v1 ask endpoint and its chat-only helper modules were removed.
+  - Reintroduction of chat compatibility aliases/patch points is disallowed.
 - Detailed v2 architecture note: [AI Chat v2 Architecture](./docs/ai-chat-v2-architecture.md)
 
 ## AI Chat v2 (Ready For Simulator)
@@ -94,7 +95,7 @@ curl -X POST http://127.0.0.1:8000/api/v2/ai/chat/runs \
 
 Notes:
 - v2 adoption is controlled by API path (`/api/v2/...`), not by a dedicated runtime feature flag.
-- v1 public contracts remain unchanged.
+- v1 analysis endpoints remain stable (`photo/text-meal/credits`), while chat is v2-only.
 
 ## Local Run
 
@@ -132,7 +133,7 @@ Run only canonical AI Chat v2 tests:
 pytest -q -m ai_v2 app/tests
 ```
 
-Run only legacy AI/chat compatibility tests:
+Run only legacy AI v1 compatibility tests:
 
 ```bash
 pytest -q -m legacy_ai tests
@@ -152,7 +153,6 @@ The backend exposes two API versions:
 
 - `GET /api/v1/health`
 - `GET /api/v1/version`
-- `POST /api/v1/ai/ask` — AI chat (gateway-enforced)
 - `POST /api/v1/ai/photo/analyze` — photo meal analysis
 - `POST /api/v1/ai/text-meal/analyze` — text meal analysis
 - `GET /api/v1/ai/credits` — credit balance
@@ -356,40 +356,8 @@ Example response:
 }
 ```
 
-`POST /api/v1/ai/ask` is the single backend AI text entrypoint used by the mobile app. It accepts chat-style requests, checks content policy, sanitizes the prompt, deducts credits, and forwards the request to OpenAI. User identity is derived from the Bearer token and chat persistence is backend-owned.
-
-Example request:
-
-```json
-{
-  "message": "Suggest a simple dinner",
-  "context": {
-    "actionType": "chat",
-    "weightKg": 78,
-    "goal": "fat loss"
-  }
-}
-```
-
-Example response:
-
-```json
-{
-  "reply": "Try grilled chicken, rice, and a side salad.",
-  "balance": 94,
-  "allocation": 100,
-  "tier": "free",
-  "periodStartAt": "2026-03-01T08:00:00Z",
-  "periodEndAt": "2026-04-01T08:00:00Z",
-  "costs": {
-    "chat": 1,
-    "textMeal": 1,
-    "photo": 5
-  },
-  "version": "0.1.0",
-  "persistence": "backend_owned"
-}
-```
+`POST /api/v2/ai/chat/runs` is the only backend AI chat entrypoint used by the mobile app.
+Legacy v1 ask endpoint has been removed.
 
 `POST /api/v1/ai/photo/analyze` is the backend photo-analysis entrypoint used by the mobile app for meal-photo AI flows.
 
