@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from google.api_core.exceptions import FailedPrecondition
 from pytest import MonkeyPatch
@@ -72,10 +72,15 @@ class _FakeCollection(_FakeQuery):
     pass
 
 
+def _build_service() -> MealQueryService:
+    # Prevent test from touching real Firebase credentials in __init__.
+    return MealQueryService(firestore_client=cast(Any, object()))
+
+
 async def test_get_meals_in_range_includes_timestamp_records_without_day_key(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    service = MealQueryService()
+    service = _build_service()
     collection = _FakeCollection(
         datasets={
             "dayKey": [],
@@ -122,7 +127,7 @@ async def test_get_meals_in_range_includes_timestamp_records_without_day_key(
 async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missing_on_others(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    service = MealQueryService()
+    service = _build_service()
     collection = _FakeCollection(
         datasets={
             "dayKey": [
@@ -168,7 +173,7 @@ async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missin
 async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_missing(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    service = MealQueryService()
+    service = _build_service()
     collection = _FakeCollection(
         datasets={
             "dayKey": [],
