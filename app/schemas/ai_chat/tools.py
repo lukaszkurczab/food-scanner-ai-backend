@@ -1,5 +1,17 @@
-from typing import List, Literal, Optional
+from __future__ import annotations
+
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+def _empty_str_list() -> list[str]:
+    return []
+
+
+def _empty_recent_turns() -> list[RecentTurnDto]:
+    return []
+
 
 class ResolvedScopeDto(BaseModel):
     type: Literal["today", "yesterday", "calendar_week", "rolling_7d", "date_range"]
@@ -9,16 +21,16 @@ class ResolvedScopeDto(BaseModel):
     is_partial: bool = Field(alias="isPartial")
 
 class ProfileSummaryDto(BaseModel):
-    goal: Optional[str] = None
-    activity_level: Optional[str] = Field(default=None, alias="activityLevel")
-    preferences: List[str] = Field(default_factory=list)
-    allergies: List[str] = Field(default_factory=list)
+    goal: str | None = None
+    activity_level: str | None = Field(default=None, alias="activityLevel")
+    preferences: list[str] = Field(default_factory=_empty_str_list)
+    allergies: list[str] = Field(default_factory=_empty_str_list)
     language: str = "pl"
 
 class GoalContextDto(BaseModel):
-    goal: Optional[str] = None
-    calorie_target: Optional[int] = Field(default=None, alias="calorieTarget")
-    protein_strategy: Optional[str] = Field(default=None, alias="proteinStrategy")
+    goal: str | None = None
+    calorie_target: int | None = Field(default=None, alias="calorieTarget")
+    protein_strategy: str | None = Field(default=None, alias="proteinStrategy")
 
 class LoggingCoverageDto(BaseModel):
     days_in_period: int = Field(alias="daysInPeriod")
@@ -42,8 +54,8 @@ class NutritionPeriodSummaryDto(BaseModel):
     period: ResolvedScopeDto
     logging_coverage: LoggingCoverageDto = Field(alias="loggingCoverage")
     totals: dict[str, float]
-    daily_breakdown: List[DailyBreakdownItemDto] = Field(alias="dailyBreakdown")
-    signals: List[str]
+    daily_breakdown: list[DailyBreakdownItemDto] = Field(alias="dailyBreakdown")
+    signals: list[str]
     reliability: ReliabilityDto
 
 class MealLoggingQualityDto(BaseModel):
@@ -54,12 +66,12 @@ class MealLoggingQualityDto(BaseModel):
 
 class AppHelpContextDto(BaseModel):
     topic: str
-    answer_facts: List[str] = Field(alias="answerFacts")
+    answer_facts: list[str] = Field(alias="answerFacts")
 
 
 class DeltaValueDto(BaseModel):
     absolute: float
-    percentage: Optional[float] = None
+    percentage: float | None = None
 
 
 class CoverageGuardDto(BaseModel):
@@ -80,8 +92,8 @@ class RecentTurnDto(BaseModel):
 
 
 class RecentChatSummaryDto(BaseModel):
-    summary: Optional[str] = None
-    resolved_facts: List[str] = Field(default_factory=list, alias="resolvedFacts")
-    last_turns: List[RecentTurnDto] = Field(default_factory=list, alias="lastTurns")
+    summary: str | None = None
+    resolved_facts: list[str] = Field(default_factory=_empty_str_list, alias="resolvedFacts")
+    last_turns: list[RecentTurnDto] = Field(default_factory=_empty_recent_turns, alias="lastTurns")
     has_summary: bool = Field(alias="hasSummary")
     source: Literal["memory_summary", "recent_turns_fallback"]

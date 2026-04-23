@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from google.cloud import firestore
 
@@ -17,7 +18,7 @@ import scripts.migrate_firestore_v2_backfill as migration  # noqa: E402
 
 
 def test_normalize_legacy_credit_snapshot_payload_strips_user_id_and_sets_metadata() -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "userId": "user-1",
         "tier": "free",
         "balance": 42,
@@ -34,7 +35,7 @@ def test_normalize_legacy_credit_snapshot_payload_strips_user_id_and_sets_metada
 
 
 def test_normalize_legacy_credit_transaction_payload_strips_user_id_and_sets_metadata() -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "userId": "user-1",
         "type": "deduct",
         "cost": 1,
@@ -51,7 +52,7 @@ def test_normalize_legacy_credit_transaction_payload_strips_user_id_and_sets_met
 
 
 def test_normalize_legacy_meal_payload_maps_timestamp_and_builds_image_ref() -> None:
-    payload = {
+    payload: dict[str, Any] = {
         "id": "legacy-id",
         "mealId": "legacy-id",
         "cloudId": "cloud-id",
@@ -103,7 +104,7 @@ def test_normalize_legacy_meal_payload_maps_timestamp_and_builds_image_ref() -> 
 
 
 def test_build_meal_migration_update_payload_marks_legacy_fields_for_deletion() -> None:
-    canonical_document = {
+    canonical_document: dict[str, Any] = {
         "loggedAt": "2026-04-20T08:45:00Z",
         "createdAt": "2026-04-20T08:40:00Z",
         "updatedAt": "2026-04-20T09:00:00Z",
@@ -120,7 +121,7 @@ def test_build_meal_migration_update_payload_marks_legacy_fields_for_deletion() 
 
 
 def test_is_meal_already_migrated_requires_schema_and_no_legacy_fields() -> None:
-    canonical = {
+    canonical: dict[str, Any] = {
         "loggedAt": "2026-04-20T08:45:00Z",
         "createdAt": "2026-04-20T08:40:00Z",
         "updatedAt": "2026-04-20T09:00:00Z",
@@ -129,11 +130,11 @@ def test_is_meal_already_migrated_requires_schema_and_no_legacy_fields() -> None
     }
     assert migration.is_meal_already_migrated(canonical) is True
 
-    with_legacy_key = dict(canonical)
+    with_legacy_key: dict[str, Any] = dict(canonical)
     with_legacy_key["timestamp"] = "2026-04-20T08:45:00Z"
     assert migration.is_meal_already_migrated(with_legacy_key) is False
 
-    without_schema = dict(canonical)
+    without_schema: dict[str, Any] = dict(canonical)
     without_schema.pop("schemaVersion")
     assert migration.is_meal_already_migrated(without_schema) is False
 

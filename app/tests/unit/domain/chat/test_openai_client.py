@@ -56,7 +56,7 @@ class _FakeCompletions:
         if self.mode == "strict_error_only":
             raise _BadRequest("Invalid request payload.")
 
-        payload = {
+        payload: dict[str, Any] = {
             "taskType": "out_of_scope_refusal",
             "queryUnderstanding": {
                 "requiresUserData": False,

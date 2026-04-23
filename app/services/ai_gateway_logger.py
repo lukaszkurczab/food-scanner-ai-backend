@@ -6,7 +6,7 @@ is emitted as product analytics events.
 """
 
 import logging
-from typing import TypedDict
+from typing import Mapping, TypedDict
 
 from app.services.ai_gateway_service import GatewayResult
 
@@ -72,7 +72,7 @@ def _emit_structured(
     *,
     sink_logger: logging.Logger,
     event_name: str,
-    payload: dict[str, object],
+    payload: Mapping[str, object],
 ) -> None:
     try:
         sink_logger.info(

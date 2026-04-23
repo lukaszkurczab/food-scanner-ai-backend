@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -50,6 +50,21 @@ def _meal_ingredients_default() -> list[MealIngredient]:
     return []
 
 
+def _str_list_default() -> list[str]:
+    return []
+
+
+def _as_object_map(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for raw_key, raw_item in raw_map.items():
+        if isinstance(raw_key, str):
+            result[raw_key] = raw_item
+    return result
+
+
 class MealDocument(BaseModel):
     loggedAt: str
     dayKey: str | None = None
@@ -65,7 +80,7 @@ class MealDocument(BaseModel):
     aiMeta: MealAiMeta | None = None
     imageRef: MealImageRef | None = None
     notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=_str_list_default)
     deleted: bool = False
     totals: MealTotals = Field(default_factory=MealTotals)
 
@@ -83,18 +98,24 @@ class MealItem(MealDocument):
     @model_validator(mode="before")
     @classmethod
     def _fill_legacy_aliases(cls, value: object) -> object:
-        if not isinstance(value, dict):
+        payload = _as_object_map(value)
+        if payload is None:
             return value
-        payload = dict(value)
-        payload.setdefault("id", payload.get("mealId") or payload.get("cloudId"))
-        payload.setdefault("loggedAt", payload.get("timestamp"))
-        if payload.get("imageRef") is None and payload.get("imageId"):
-            payload["imageRef"] = {
-                "imageId": payload.get("imageId"),
-                "storagePath": f"meals/unknown/{payload.get('imageId')}.jpg",
-                "downloadUrl": payload.get("photoUrl"),
+
+        normalized: dict[str, Any] = dict(payload)
+        if normalized.get("id") is None:
+            normalized["id"] = normalized.get("mealId") or normalized.get("cloudId")
+        if normalized.get("loggedAt") is None:
+            normalized["loggedAt"] = normalized.get("timestamp")
+
+        image_id = normalized.get("imageId")
+        if normalized.get("imageRef") is None and isinstance(image_id, str) and image_id:
+            normalized["imageRef"] = {
+                "imageId": image_id,
+                "storagePath": f"meals/unknown/{image_id}.jpg",
+                "downloadUrl": normalized.get("photoUrl"),
             }
-        return payload
+        return normalized
 
 
 class MealsHistoryPageResponse(BaseModel):
@@ -129,7 +150,7 @@ class MealUpsertRequest(BaseModel):
     imageId: str | None = None
     photoUrl: str | None = None
     notes: str | None = None
-    tags: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=_str_list_default)
     deleted: bool = False
     totals: MealTotals | None = None
     userUid: str | None = None

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from google.api_core.exceptions import FailedPrecondition
+from pytest import MonkeyPatch
 
 from app.domain.meals.services.meal_query_service import MealQueryService
 
@@ -71,7 +72,9 @@ class _FakeCollection(_FakeQuery):
     pass
 
 
-async def test_get_meals_in_range_includes_timestamp_records_without_day_key(monkeypatch) -> None:
+async def test_get_meals_in_range_includes_timestamp_records_without_day_key(
+    monkeypatch: MonkeyPatch,
+) -> None:
     service = MealQueryService()
     collection = _FakeCollection(
         datasets={
@@ -97,7 +100,11 @@ async def test_get_meals_in_range_includes_timestamp_records_without_day_key(mon
             "all": [],
         }
     )
-    monkeypatch.setattr(service, "_meals_collection", lambda *, user_id: collection)
+    def _collection_for_user(*, user_id: str) -> _FakeCollection:
+        _ = user_id
+        return collection
+
+    monkeypatch.setattr(service, "_meals_collection", _collection_for_user)
 
     records = await service.get_meals_in_range(
         user_id="user-1",
@@ -112,7 +119,9 @@ async def test_get_meals_in_range_includes_timestamp_records_without_day_key(mon
     assert records[0].kcal == 520
 
 
-async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missing_on_others(monkeypatch) -> None:
+async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missing_on_others(
+    monkeypatch: MonkeyPatch,
+) -> None:
     service = MealQueryService()
     collection = _FakeCollection(
         datasets={
@@ -140,7 +149,11 @@ async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missin
             "all": [],
         }
     )
-    monkeypatch.setattr(service, "_meals_collection", lambda *, user_id: collection)
+    def _collection_for_user(*, user_id: str) -> _FakeCollection:
+        _ = user_id
+        return collection
+
+    monkeypatch.setattr(service, "_meals_collection", _collection_for_user)
 
     records = await service.get_meals_in_range(
         user_id="user-1",
@@ -152,7 +165,9 @@ async def test_get_meals_in_range_ignores_deleted_records_even_when_field_missin
     assert [record.id for record in records] == ["meal-active"]
 
 
-async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_missing(monkeypatch) -> None:
+async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
     service = MealQueryService()
     collection = _FakeCollection(
         datasets={
@@ -173,7 +188,11 @@ async def test_get_meals_in_range_falls_back_to_collection_scan_when_indexes_mis
         fail_logged_at=True,
         fail_timestamp=True,
     )
-    monkeypatch.setattr(service, "_meals_collection", lambda *, user_id: collection)
+    def _collection_for_user(*, user_id: str) -> _FakeCollection:
+        _ = user_id
+        return collection
+
+    monkeypatch.setattr(service, "_meals_collection", _collection_for_user)
 
     records = await service.get_meals_in_range(
         user_id="user-1",

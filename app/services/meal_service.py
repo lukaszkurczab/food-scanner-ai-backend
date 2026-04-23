@@ -712,8 +712,8 @@ async def mark_deleted(
 
     try:
         snapshot = meal_ref.get()
-        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
-        payload = {
+        existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+        payload: dict[str, Any] = {
             **existing,
             "id": meal_id,
             "loggedAt": existing.get("loggedAt") or existing.get("timestamp") or normalized_updated_at,

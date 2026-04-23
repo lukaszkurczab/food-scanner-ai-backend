@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import logging
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 from fastapi import UploadFile
 from firebase_admin.exceptions import FirebaseError
@@ -47,7 +47,12 @@ async def list_changes(
 def _as_object_map(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
-    return {str(key): item for key, item in value.items() if isinstance(key, str)}
+    raw_map = cast(dict[object, object], value)
+    result: dict[str, object] = {}
+    for key, item in raw_map.items():
+        if isinstance(key, str):
+            result[key] = item
+    return result
 
 
 def _saved_meal_item_from_document(meal_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -113,7 +118,7 @@ def _normalize_saved_meal_snapshot(
     user_id: str,
     snapshot: firestore.DocumentSnapshot,
 ) -> dict[str, Any]:
-    data = dict(snapshot.to_dict() or {})
+    data: dict[str, Any] = dict(snapshot.to_dict() or {})
     meal_id, normalized = _normalize_saved_meal_document(
         user_id,
         data,
@@ -155,7 +160,7 @@ async def mark_deleted(
 
     try:
         snapshot = meal_ref.get()
-        existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
+        existing: dict[str, Any] = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
         normalized_id, normalized_document = _normalize_saved_meal_document(
             user_id,
             {
