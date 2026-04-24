@@ -58,6 +58,44 @@ def test_post_user_onboarding_returns_backend_payload(
     )
 
 
+def test_post_user_onboarding_repeated_same_uid_username_succeeds(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "app.api.deps.auth.decode_firebase_token",
+        return_value={"uid": "user-1", "email": "user@example.com"},
+    )
+    initialize = mocker.patch(
+        "app.api.routes.users.user_account_service.initialize_onboarding_profile",
+        return_value=(
+            "neo",
+            {
+                "uid": "user-1",
+                "email": "user@example.com",
+                "username": "neo",
+                "language": "pl",
+                "plan": "free",
+            },
+        ),
+    )
+
+    first_response = client.post(
+        "/api/v1/users/me/onboarding",
+        json={"username": "Neo", "language": "pl"},
+        headers={"Authorization": "Bearer user-1"},
+    )
+    second_response = client.post(
+        "/api/v1/users/me/onboarding",
+        json={"username": "Neo", "language": "pl"},
+        headers={"Authorization": "Bearer user-1"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.json()["username"] == second_response.json()["username"] == "neo"
+    assert initialize.call_count == 2
+
+
 def test_post_user_onboarding_returns_400_for_invalid_username(
     mocker: MockerFixture,
 ) -> None:

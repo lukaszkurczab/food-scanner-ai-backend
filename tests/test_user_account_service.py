@@ -501,6 +501,53 @@ def test_initialize_onboarding_profile_creates_atomic_profile_and_username(
     assert transaction.delete_calls == [previous_username_ref]
 
 
+def test_initialize_onboarding_profile_repeated_same_uid_and_username_succeeds(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, username_ref = (
+        _build_client(mocker)
+    )
+    first_transaction = FakeTransaction()
+    second_transaction = FakeTransaction()
+    client.transaction.side_effect = [first_transaction, second_transaction]
+    username_ref.get.side_effect = [
+        _build_snapshot(mocker, exists=False),
+        _build_snapshot(mocker, exists=True, data={"uid": "user-1"}),
+    ]
+    user_ref.get.side_effect = [
+        _build_snapshot(mocker, exists=False),
+        _build_snapshot(
+            mocker,
+            exists=True,
+            data={"uid": "user-1", "username": "neo", "email": "user@example.com"},
+        ),
+    ]
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    first_username, first_profile = asyncio.run(
+        user_account_service.initialize_onboarding_profile(
+            "user-1",
+            username="Neo",
+            language="pl",
+            auth_email="user@example.com",
+        )
+    )
+    second_username, second_profile = asyncio.run(
+        user_account_service.initialize_onboarding_profile(
+            "user-1",
+            username="Neo",
+            language="pl",
+            auth_email="user@example.com",
+        )
+    )
+
+    assert first_username == second_username == "neo"
+    assert first_profile["uid"] == second_profile["uid"] == "user-1"
+    assert first_profile["username"] == second_profile["username"] == "neo"
+    assert first_transaction.delete_calls == []
+    assert second_transaction.delete_calls == []
+
+
 def test_initialize_onboarding_profile_is_idempotent_for_same_username_owner(
     mocker: MockerFixture,
 ) -> None:
