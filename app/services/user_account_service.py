@@ -362,7 +362,11 @@ async def upload_avatar(user_id: str, upload: UploadFile) -> tuple[str, str]:
     return await set_avatar_metadata(user_id, avatar_url)
 
 
-async def get_user_profile_data(user_id: str) -> dict[str, Any] | None:
+async def get_user_profile_data(
+    user_id: str,
+    *,
+    touch_last_login: bool = False,
+) -> dict[str, Any] | None:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
 
@@ -378,7 +382,21 @@ async def get_user_profile_data(user_id: str) -> dict[str, Any] | None:
     if not snapshot.exists:
         return None
 
-    return dict(snapshot.to_dict() or {})
+    profile = dict(snapshot.to_dict() or {})
+
+    if touch_last_login:
+        last_login = _utc_timestamp()
+        try:
+            user_ref.set({"lastLogin": last_login}, merge=True)
+        except (FirebaseError, GoogleAPICallError, RetryError) as exc:
+            logger.exception(
+                "Failed to update user last login.",
+                extra={"user_id": user_id},
+            )
+            raise FirestoreServiceError("Failed to update user last login.") from exc
+        profile["lastLogin"] = last_login
+
+    return profile
 
 
 async def upsert_user_profile_data(

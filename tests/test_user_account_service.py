@@ -351,6 +351,7 @@ def test_get_user_profile_data_returns_profile_document(
 
     users_collection_ref.document.assert_called_once_with("user-1")
     assert profile == {"uid": "user-1", "username": "neo"}
+    user_ref.set.assert_not_called()
 
 
 def test_get_user_profile_data_returns_none_when_missing(
@@ -365,6 +366,61 @@ def test_get_user_profile_data_returns_none_when_missing(
     profile = asyncio.run(user_account_service.get_user_profile_data("user-1"))
 
     assert profile is None
+    user_ref.set.assert_not_called()
+
+
+def test_get_user_profile_data_can_touch_last_login_for_session_bootstrap(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "user-1", "lastLogin": "2026-01-01T00:00:00Z"},
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-17T10:30:00Z",
+    )
+
+    profile = asyncio.run(
+        user_account_service.get_user_profile_data(
+            "user-1",
+            touch_last_login=True,
+        )
+    )
+
+    user_ref.set.assert_called_once_with(
+        {"lastLogin": "2026-05-17T10:30:00Z"},
+        merge=True,
+    )
+    assert profile == {"uid": "user-1", "lastLogin": "2026-05-17T10:30:00Z"}
+
+
+def test_get_user_profile_data_wraps_last_login_write_errors(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={"uid": "user-1"},
+    )
+    user_ref.set.side_effect = GoogleAPICallError("boom")
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    with pytest.raises(FirestoreServiceError):
+        asyncio.run(
+            user_account_service.get_user_profile_data(
+                "user-1",
+                touch_last_login=True,
+            )
+        )
 
 
 def test_upsert_user_profile_data_bootstraps_server_owned_fields(

@@ -78,7 +78,7 @@ def test_get_user_profile_returns_backend_payload(
     assert response.json() == {
         "profile": {"uid": "user-1", "username": "neo", "profile": canonical_profile},
     }
-    get_user_profile_data.assert_called_once_with("user-1")
+    get_user_profile_data.assert_called_once_with("user-1", touch_last_login=True)
 
 
 def test_get_user_profile_uses_token_uid_not_client_supplied_uid(
@@ -99,7 +99,10 @@ def test_get_user_profile_uses_token_uid_not_client_supplied_uid(
     assert response.json() == {
         "profile": {"uid": "token-user", "username": "neo"},
     }
-    get_user_profile_data.assert_called_once_with("token-user")
+    get_user_profile_data.assert_called_once_with(
+        "token-user",
+        touch_last_login=True,
+    )
 
 
 def test_post_user_profile_returns_updated_payload(
