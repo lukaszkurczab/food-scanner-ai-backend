@@ -192,6 +192,34 @@ def _remove_legacy_fields(document: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+def _apply_confirmed_auth_email(
+    document: dict[str, Any],
+    *,
+    existing: dict[str, Any],
+    auth_email: str | None,
+) -> None:
+    normalized_email = normalize_email(auth_email)
+    if not normalized_email:
+        return
+
+    document["email"] = normalized_email
+    if normalize_email(existing.get("emailPending")) == normalized_email:
+        document["emailPending"] = firestore.DELETE_FIELD
+
+
+def _merge_document_for_response(
+    existing: dict[str, Any],
+    document: dict[str, Any],
+) -> dict[str, Any]:
+    merged = _remove_legacy_fields(dict(existing))
+    for key, value in document.items():
+        if value is firestore.DELETE_FIELD:
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _build_onboarding_profile_document(
     *,
     user_id: str,
@@ -366,6 +394,7 @@ async def get_user_profile_data(
     user_id: str,
     *,
     touch_last_login: bool = False,
+    auth_email: str | None = None,
 ) -> dict[str, Any] | None:
     client: firestore.Client = get_firestore()
     user_ref = client.collection(USERS_COLLECTION).document(user_id)
@@ -384,17 +413,27 @@ async def get_user_profile_data(
 
     profile = dict(snapshot.to_dict() or {})
 
+    document: dict[str, Any] = {}
     if touch_last_login:
-        last_login = _utc_timestamp()
+        document["lastLogin"] = _utc_timestamp()
+    _apply_confirmed_auth_email(
+        document,
+        existing=profile,
+        auth_email=auth_email,
+    )
+
+    if document:
         try:
-            user_ref.set({"lastLogin": last_login}, merge=True)
+            user_ref.set(document, merge=True)
         except (FirebaseError, GoogleAPICallError, RetryError) as exc:
             logger.exception(
-                "Failed to update user last login.",
+                "Failed to update user profile bootstrap metadata.",
                 extra={"user_id": user_id},
             )
-            raise FirestoreServiceError("Failed to update user last login.") from exc
-        profile["lastLogin"] = last_login
+            raise FirestoreServiceError(
+                "Failed to update user profile bootstrap metadata."
+            ) from exc
+        profile = _merge_document_for_response(profile, document)
 
     return profile
 
@@ -414,9 +453,11 @@ async def upsert_user_profile_data(
         existing = dict(snapshot.to_dict() or {}) if snapshot.exists else {}
 
         document: dict[str, Any] = {**_legacy_delete_document(), "uid": user_id}
-        normalized_email = normalize_email(auth_email)
-        if normalized_email:
-            document["email"] = normalized_email
+        _apply_confirmed_auth_email(
+            document,
+            existing=existing,
+            auth_email=auth_email,
+        )
         if "createdAt" not in existing:
             document["createdAt"] = _utc_timestamp_ms()
         if "plan" not in existing:
@@ -446,14 +487,7 @@ async def upsert_user_profile_data(
         )
         raise FirestoreServiceError("Failed to upsert user profile data.") from exc
 
-    merged = _remove_legacy_fields(dict(existing))
-    merged.update(
-        {
-            key: value
-            for key, value in document.items()
-            if value is not firestore.DELETE_FIELD
-        }
-    )
+    merged = _merge_document_for_response(existing, document)
 
     nutrition_patch = (
         sanitized_patch.get("profile", {}).get("nutritionProfile")
@@ -497,9 +531,11 @@ async def complete_onboarding_profile(
             "lastLogin": now_iso,
             "profile": canonical_profile,
         }
-        normalized_email = normalize_email(auth_email)
-        if normalized_email:
-            document["email"] = normalized_email
+        _apply_confirmed_auth_email(
+            document,
+            existing=existing,
+            auth_email=auth_email,
+        )
         if "createdAt" not in existing:
             document["createdAt"] = _utc_timestamp_ms()
         if "plan" not in existing:
@@ -517,14 +553,7 @@ async def complete_onboarding_profile(
         )
         raise FirestoreServiceError("Failed to complete onboarding profile.") from exc
 
-    merged = _remove_legacy_fields(dict(existing))
-    merged.update(
-        {
-            key: value
-            for key, value in document.items()
-            if value is not firestore.DELETE_FIELD
-        }
-    )
+    merged = _merge_document_for_response(existing, document)
     await streak_service.sync_streak_from_meals(user_id)
     return merged
 
@@ -583,9 +612,11 @@ async def record_ai_health_data_consent(
             "uid": user_id,
             "profile": canonical_profile,
         }
-        normalized_email = normalize_email(auth_email)
-        if normalized_email:
-            document["email"] = normalized_email
+        _apply_confirmed_auth_email(
+            document,
+            existing=existing,
+            auth_email=auth_email,
+        )
         if "createdAt" not in existing:
             document["createdAt"] = _utc_timestamp_ms()
         if "plan" not in existing:
@@ -603,14 +634,7 @@ async def record_ai_health_data_consent(
         )
         raise FirestoreServiceError("Failed to record AI health data consent.") from exc
 
-    merged = _remove_legacy_fields(dict(existing))
-    merged.update(
-        {
-            key: value
-            for key, value in document.items()
-            if value is not firestore.DELETE_FIELD
-        }
-    )
+    merged = _merge_document_for_response(existing, document)
     return merged
 
 

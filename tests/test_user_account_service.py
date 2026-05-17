@@ -400,6 +400,81 @@ def test_get_user_profile_data_can_touch_last_login_for_session_bootstrap(
     assert profile == {"uid": "user-1", "lastLogin": "2026-05-17T10:30:00Z"}
 
 
+def test_get_user_profile_data_clears_confirmed_email_pending(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "uid": "user-1",
+            "email": "old@example.com",
+            "emailPending": "new@example.com",
+            "lastLogin": "2026-01-01T00:00:00Z",
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service._utc_timestamp",
+        return_value="2026-05-17T10:30:00Z",
+    )
+
+    profile = asyncio.run(
+        user_account_service.get_user_profile_data(
+            "user-1",
+            touch_last_login=True,
+            auth_email="new@example.com",
+        )
+    )
+
+    document = user_ref.set.call_args.args[0]
+    assert user_ref.set.call_args.kwargs == {"merge": True}
+    assert document["lastLogin"] == "2026-05-17T10:30:00Z"
+    assert document["email"] == "new@example.com"
+    assert document["emailPending"] is user_account_service.firestore.DELETE_FIELD
+    assert profile == {
+        "uid": "user-1",
+        "email": "new@example.com",
+        "lastLogin": "2026-05-17T10:30:00Z",
+    }
+
+
+def test_get_user_profile_data_preserves_unmatched_email_pending(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "uid": "user-1",
+            "email": "old@example.com",
+            "emailPending": "pending@example.com",
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+
+    profile = asyncio.run(
+        user_account_service.get_user_profile_data(
+            "user-1",
+            auth_email="other@example.com",
+        )
+    )
+
+    document = user_ref.set.call_args.args[0]
+    assert document == {"email": "other@example.com"}
+    assert profile == {
+        "uid": "user-1",
+        "email": "other@example.com",
+        "emailPending": "pending@example.com",
+    }
+
+
 def test_get_user_profile_data_wraps_last_login_write_errors(
     mocker: MockerFixture,
 ) -> None:
@@ -460,6 +535,42 @@ def test_upsert_user_profile_data_bootstraps_server_owned_fields(
     assert profile["username"] == "neo"
     assert profile["profile"]["language"] == "pl"
     sync_streak.assert_not_called()
+
+
+def test_upsert_user_profile_data_clears_confirmed_email_pending(
+    mocker: MockerFixture,
+) -> None:
+    client, _users_collection_ref, _usernames_collection_ref, user_ref, _username_ref = (
+        _build_client(mocker)
+    )
+    user_ref.get.return_value = _build_snapshot(
+        mocker,
+        exists=True,
+        data={
+            "username": "neo",
+            "email": "old@example.com",
+            "emailPending": "new@example.com",
+            "profile": {"language": "en"},
+        },
+    )
+    mocker.patch("app.services.user_account_service.get_firestore", return_value=client)
+    mocker.patch(
+        "app.services.user_account_service.streak_service.sync_streak_from_meals"
+    )
+
+    profile = asyncio.run(
+        user_account_service.upsert_user_profile_data(
+            "user-1",
+            {"profile": {"language": "pl"}},
+            auth_email="new@example.com",
+        )
+    )
+
+    document = user_ref.set.call_args.args[0]
+    assert document["email"] == "new@example.com"
+    assert document["emailPending"] is user_account_service.firestore.DELETE_FIELD
+    assert profile["email"] == "new@example.com"
+    assert "emailPending" not in profile
 
 
 def test_upsert_user_profile_data_recomputes_streak_when_calorie_target_changes(

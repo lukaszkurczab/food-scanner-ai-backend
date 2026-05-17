@@ -42,9 +42,11 @@ router = APIRouter()
 async def get_user_profile_me(
     current_user: AuthenticatedUser = Depends(get_required_authenticated_user),
 ) -> UserProfileResponse:
+    auth_email = current_user.claims.get("email")
     profile = await user_account_service.get_user_profile_data(
         current_user.uid,
         touch_last_login=True,
+        auth_email=auth_email if isinstance(auth_email, str) else None,
     )
     return UserProfileResponse(profile=profile)
 

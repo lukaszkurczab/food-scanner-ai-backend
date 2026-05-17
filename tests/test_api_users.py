@@ -78,7 +78,11 @@ def test_get_user_profile_returns_backend_payload(
     assert response.json() == {
         "profile": {"uid": "user-1", "username": "neo", "profile": canonical_profile},
     }
-    get_user_profile_data.assert_called_once_with("user-1", touch_last_login=True)
+    get_user_profile_data.assert_called_once_with(
+        "user-1",
+        touch_last_login=True,
+        auth_email=None,
+    )
 
 
 def test_get_user_profile_uses_token_uid_not_client_supplied_uid(
@@ -102,6 +106,34 @@ def test_get_user_profile_uses_token_uid_not_client_supplied_uid(
     get_user_profile_data.assert_called_once_with(
         "token-user",
         touch_last_login=True,
+        auth_email=None,
+    )
+
+
+def test_get_user_profile_passes_auth_email_for_pending_cleanup(
+    mocker: MockerFixture,
+    mock_auth_token_decoder: MagicMock,
+) -> None:
+    mock_auth_token_decoder.side_effect = None
+    mock_auth_token_decoder.return_value = {
+        "uid": "user-1",
+        "email": "new@example.com",
+    }
+    get_user_profile_data = mocker.patch(
+        "app.api.routes.users.user_account_service.get_user_profile_data",
+        return_value={"uid": "user-1", "email": "new@example.com"},
+    )
+
+    response = client.get(
+        "/api/v1/users/me/profile",
+        headers={"Authorization": "Bearer user-1"},
+    )
+
+    assert response.status_code == 200
+    get_user_profile_data.assert_called_once_with(
+        "user-1",
+        touch_last_login=True,
+        auth_email="new@example.com",
     )
 
 
